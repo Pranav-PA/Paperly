@@ -59,6 +59,9 @@ class ChatViewModel(
         private set
     var generating by mutableStateOf(false)
         private set
+    /** What the running background job does: generate | import | edit. */
+    var jobKind by mutableStateOf("generate")
+        private set
     var uploading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
@@ -80,7 +83,7 @@ class ChatViewModel(
             messages = detail.messages
             latestPaperId = detail.latestPaperId
             if (detail.activeJobId != null && !generating) {
-                viewModelScope.launch { followJob(detail.activeJobId) }
+                viewModelScope.launch { followJob(detail.activeJobId, detail.activeJobKind ?: "generate") }
             }
         } catch (e: PaperlyException) {
             error = e.message
@@ -103,7 +106,7 @@ class ChatViewModel(
                 val reply = repo.sendMessage(conversationId, content)
                 load()
                 val meta = repo.metaOf(reply)
-                if (meta?.action == "generating" && meta.jobId != null) followJob(meta.jobId)
+                if (meta?.action == "working" && meta.jobId != null) followJob(meta.jobId, meta.kind ?: "generate")
             } catch (e: PaperlyException) {
                 messages = messages - optimistic
                 restoredDraft = content
@@ -114,8 +117,9 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun followJob(jobId: String) {
+    private suspend fun followJob(jobId: String, kind: String) {
         if (generating) return
+        jobKind = kind
         generating = true
         try {
             repo.awaitJob(jobId)
@@ -145,6 +149,7 @@ class ChatViewModel(
 
 private val uploadTypes = arrayOf(
     "application/pdf",
+    "image/*",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "text/plain",
     "text/markdown",
@@ -153,10 +158,17 @@ private val uploadTypes = arrayOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPaper: (String, String) -> Unit) {
+fun ChatScreen(vm: ChatViewModel, openPicker: Boolean, onBack: () -> Unit, onOpenPaper: (String, String) -> Unit) {
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::upload) }
+    var pickerShown by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(openPicker) {
+        if (openPicker && !pickerShown) {
+            pickerShown = true
+            picker.launch(uploadTypes)
+        }
+    }
 
     LaunchedEffect(vm.restoredDraft) {
         vm.restoredDraft?.let { if (input.isBlank()) input = it; vm.restoredDraft = null }
@@ -177,7 +189,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPaper: (String, Stri
                         Text(vm.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             when {
-                                vm.generating -> "Writing your paper…"
+                                vm.generating -> jobTitle(vm.jobKind) + "…"
                                 vm.sending -> "Thinking…"
                                 else -> "Paperly AI assistant"
                             },
@@ -213,17 +225,17 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPaper: (String, Stri
                         Row(Modifier.padding(start = 20.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Uploading reference file…", style = MaterialTheme.typography.bodySmall)
+                            Text("Uploading file…", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     Row(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
                         IconButton(onClick = { picker.launch(uploadTypes) }, enabled = !vm.uploading && !vm.generating) {
-                            Icon(Icons.Rounded.AttachFile, contentDescription = "Attach syllabus or notes")
+                            Icon(Icons.Rounded.AttachFile, contentDescription = "Attach a paper, notes or photo")
                         }
                         TextField(
                             value = input,
                             onValueChange = { input = it },
-                            placeholder = { Text(if (vm.latestPaperId != null) "Ask for another version…" else "Reply to Paperly…") },
+                            placeholder = { Text(if (vm.latestPaperId != null) "Ask for any change…" else "Message Paperly…") },
                             shape = RoundedCornerShape(22.dp),
                             colors = TextFieldDefaults.colors(
                                 focusedIndicatorColor = Color.Transparent,
@@ -265,8 +277,10 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPaper: (String, Stri
                 val meta = vm.metaAction(msg)
                 when {
                     msg.role == "user" -> UserBubble(msg.content)
-                    meta?.action == "paper_ready" && meta.paperId != null ->
-                        PaperReadyCard(msg.content) { onOpenPaper(meta.paperId, vm.title) }
+                    (meta?.action == "paper_ready" || meta?.action == "paper_updated") && meta.paperId != null ->
+                        PaperReadyCard(msg.content, updated = meta.action == "paper_updated", version = meta.version) {
+                            onOpenPaper(meta.paperId, vm.title)
+                        }
                     else -> AssistantBubble(msg.content, isError = meta?.action == "error")
                 }
             }
@@ -276,7 +290,7 @@ fun ChatScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenPaper: (String, Stri
                 }
             }
             if (vm.generating) {
-                item(key = "generating") { GeneratingCard() }
+                item(key = "generating") { GeneratingCard(vm.jobKind) }
             }
         }
     }
@@ -326,7 +340,7 @@ private fun AssistantBubble(text: String, isError: Boolean) {
 }
 
 @Composable
-private fun PaperReadyCard(text: String, onOpen: () -> Unit) {
+private fun PaperReadyCard(text: String, updated: Boolean, version: Int?, onOpen: () -> Unit) {
     AnimatedVisibility(visible = true, enter = fadeIn() + slideInVertically { it / 3 }) {
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -341,7 +355,10 @@ private fun PaperReadyCard(text: String, onOpen: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) { Icon(Icons.Rounded.TaskAlt, null, tint = Success) }
                     Spacer(Modifier.width(12.dp))
-                    Text("Paper ready", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (updated) "Paper updated" + (version?.let { " · v$it" } ?: "") else "Paper ready",
+                        style = MaterialTheme.typography.titleMedium
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -356,15 +373,21 @@ private fun PaperReadyCard(text: String, onOpen: () -> Unit) {
     }
 }
 
-private val generationSteps = listOf(
-    0 to "Understanding your requirements",
-    6 to "Drafting questions",
-    25 to "Checking answers & calculations",
-    50 to "Formatting the paper",
-)
+private fun jobTitle(kind: String) = when (kind) {
+    "import" -> "Reading your document"
+    "edit" -> "Updating your paper"
+    else -> "Writing your paper"
+}
+
+private fun jobSteps(kind: String) = when (kind) {
+    "import" -> listOf(0 to "Reading the document", 8 to "Copying every question exactly", 25 to "Applying your change", 45 to "Formatting the paper")
+    "edit" -> listOf(0 to "Understanding the change", 5 to "Editing the paper", 20 to "Checking the rest is unchanged", 40 to "Saving a new version")
+    else -> listOf(0 to "Understanding your requirements", 6 to "Drafting questions", 25 to "Checking answers & calculations", 50 to "Formatting the paper")
+}
 
 @Composable
-private fun GeneratingCard() {
+private fun GeneratingCard(kind: String) {
+    val generationSteps = remember(kind) { jobSteps(kind) }
     var elapsed by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) { delay(1000); elapsed++ }
@@ -381,7 +404,7 @@ private fun GeneratingCard() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(10.dp))
-                Text("Writing your paper", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(jobTitle(kind), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text("${elapsed}s", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(12.dp))
@@ -404,7 +427,7 @@ private fun GeneratingCard() {
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "You can leave this screen; the paper keeps generating on the server.",
+                "You can leave this screen; Paperly keeps working on the server.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

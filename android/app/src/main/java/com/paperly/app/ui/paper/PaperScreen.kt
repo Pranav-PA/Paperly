@@ -176,7 +176,7 @@ fun PaperScreen(vm: PaperViewModel, onBack: () -> Unit) {
                                 value = editText,
                                 onValueChange = { editText = it },
                                 enabled = !vm.editing,
-                                placeholder = { Text("Ask for a change, e.g. make Q3 harder") },
+                                placeholder = { Text("Any change: \"make Q3 harder\", \"two columns\"") },
                                 leadingIcon = { Icon(Icons.Rounded.AutoFixHigh, null, tint = MaterialTheme.colorScheme.primary) },
                                 shape = RoundedCornerShape(22.dp),
                                 colors = TextFieldDefaults.colors(
@@ -318,8 +318,12 @@ private fun PaperHeader(paper: Paper) {
             meta.subtitle?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f)) }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pill(meta.subject, Color.White)
-                meta.classGrade?.let { Pill(it, Color.White) }
+                meta.subject.takeIf { it.isNotBlank() }?.let { Pill(it, Color.White) }
+                meta.classGrade?.takeIf { it.isNotBlank() }?.let { Pill(it, Color.White) }
+            }
+            paper.layout?.summary?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(8.dp))
+                Pill(it, Color.White, icon = Icons.Rounded.ViewColumn)
             }
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

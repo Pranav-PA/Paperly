@@ -135,21 +135,24 @@ private fun MainNavigation(app: PaperlyApp, onCheckUpdates: () -> Unit) {
                 onOpenConversation = { id, prompt ->
                     nav.navigate("chat/$id" + (prompt?.let { "?prompt=${Uri.encode(it)}" } ?: ""))
                 },
+                onUploadToEdit = { id -> nav.navigate("chat/$id?pick=true") },
                 onOpenPaper = { id, _ -> nav.navigate("paper/$id") },
                 onCheckUpdates = onCheckUpdates
             )
         }
         composable(
-            "chat/{id}?prompt={prompt}",
+            "chat/{id}?prompt={prompt}&pick={pick}",
             arguments = listOf(
                 navArgument("id") { type = NavType.StringType },
-                navArgument("prompt") { type = NavType.StringType; nullable = true; defaultValue = null }
+                navArgument("prompt") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("pick") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val id = entry.arguments?.getString("id").orEmpty()
             val prompt = entry.arguments?.getString("prompt")
             ChatScreen(
                 vm = paperlyViewModel("chat-$id") { ChatViewModel(app.repository, id, prompt) },
+                openPicker = entry.arguments?.getBoolean("pick") == true,
                 onBack = { nav.popBackStack() },
                 onOpenPaper = { paperId, _ -> nav.navigate("paper/$paperId") }
             )

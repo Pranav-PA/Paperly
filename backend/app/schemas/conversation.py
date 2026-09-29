@@ -35,6 +35,7 @@ class ConversationSummary(BaseModel):
 class ConversationDetail(ConversationSummary):
     messages: List[MessageResponse] = []
     active_job_id: Optional[str] = None
+    active_job_kind: Optional[str] = None
 
 
 class FileUploadResponse(BaseModel):

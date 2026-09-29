@@ -113,7 +113,7 @@ private val suggestions = listOf(
     "Class 10 Maths: Quadratic Equations, 40 marks",
     "NEET Physics mock: Electrostatics, 45 MCQs",
     "Class 8 Science unit test on Light, 25 marks",
-    "Class 12 Chemistry: Chemical Kinetics, 35 marks",
+    "Class 12 Chemistry: Chemical Kinetics, 35 marks, two-column layout",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +121,7 @@ private val suggestions = listOf(
 fun HomeScreen(
     vm: HomeViewModel,
     onOpenConversation: (id: String, initialPrompt: String?) -> Unit,
+    onUploadToEdit: (id: String) -> Unit,
     onOpenPaper: (paperId: String, title: String) -> Unit,
     onCheckUpdates: () -> Unit,
 ) {
@@ -202,7 +203,7 @@ fun HomeScreen(
             modifier = Modifier.padding(padding).fillMaxSize()
         ) {
             if (tab == 0) {
-                CreateTab(vm, onOpenConversation, onDelete = { pendingDelete = it })
+                CreateTab(vm, onOpenConversation, onUploadToEdit, onDelete = { pendingDelete = it })
             } else {
                 LibraryTab(vm, onOpenPaper)
             }
@@ -239,6 +240,7 @@ private fun greeting(): String = when (LocalTime.now().hour) {
 private fun CreateTab(
     vm: HomeViewModel,
     onOpenConversation: (String, String?) -> Unit,
+    onUploadToEdit: (String) -> Unit,
     onDelete: (ConversationSummary) -> Unit
 ) {
     var prompt by rememberSaveable { mutableStateOf("") }
@@ -269,10 +271,10 @@ private fun CreateTab(
                 Column {
                     Pill("AI teaching assistant", Color.White, icon = Icons.Rounded.AutoAwesome)
                     Spacer(Modifier.height(12.dp))
-                    Text("What paper shall we\ncreate today?", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+                    Text("What shall we\nwork on today?", style = MaterialTheme.typography.headlineSmall, color = Color.White)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Describe it in your own words. I'll ask if anything's missing.",
+                        "Describe a new paper, or upload one and tell me what to change.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f)
                     )
@@ -310,6 +312,18 @@ private fun CreateTab(
                                 Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Start")
                             }
                         }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { if (!vm.creating) vm.startConversation("Uploaded paper") { id -> onUploadToEdit(id) } },
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Rounded.UploadFile, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Upload a paper to edit (PDF, Word, photo)")
                     }
                 }
             }

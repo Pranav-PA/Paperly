@@ -91,6 +91,7 @@ class PaperlyRepository(
             throw PaperlyException("The Server URL looks invalid. Example: https://your-name.trycloudflare.com")
         } catch (e: Exception) {
             // e.g. the URL points at a web page instead of Paperly, so the reply isn't the JSON we expect.
+            android.util.Log.w("Paperly", "Unexpected response", e)
             throw PaperlyException("Unexpected reply from the server. Check the Server URL points to Paperly.")
         }
     }
@@ -215,11 +216,12 @@ class PaperlyRepository(
     suspend fun editPaper(id: String, instruction: String): EditResult {
         val jobId = call { editPaper(id, EditRequest(instruction)) }.jobId
         val job = awaitJob(jobId)
-        if (job.status == "error" || job.result == null) {
+        val result = job.result?.takeIf { it.isJsonObject }
+        if (job.status == "error" || result == null) {
             throw PaperlyException(job.error ?: "The change couldn't be applied.")
         }
         return try {
-            gson.fromJson(job.result, EditResult::class.java)
+            gson.fromJson(result, EditResult::class.java)
         } catch (e: Exception) {
             throw PaperlyException("The change was saved but couldn't be shown. Reopen the paper.")
         }

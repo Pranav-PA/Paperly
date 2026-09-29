@@ -1,6 +1,6 @@
 package com.paperly.app.data.model
 
-import com.google.gson.JsonObject
+import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
 
 // ---------- Auth ----------
@@ -53,13 +53,16 @@ data class ConversationDetail(
     val title: String,
     val messages: List<Message>,
     @SerializedName("latest_paper_id") val latestPaperId: String?,
-    @SerializedName("active_job_id") val activeJobId: String?
+    @SerializedName("active_job_id") val activeJobId: String?,
+    @SerializedName("active_job_kind") val activeJobKind: String?
 )
 
 data class SendMessageRequest(val content: String)
 
 data class MessageMeta(
     val action: String?,
+    val kind: String?,
+    val version: Int?,
     @SerializedName("paper_id") val paperId: String?,
     @SerializedName("job_id") val jobId: String?
 )
@@ -75,7 +78,8 @@ data class JobStarted(@SerializedName("job_id") val jobId: String)
 data class JobStatus(
     val id: String,
     val status: String, // running | done | error
-    val result: JsonObject?,
+    // JsonElement, not JsonObject: while running the server sends null (JsonNull), which crashed v1.1.0.
+    val result: JsonElement?,
     val error: String?
 )
 
@@ -126,9 +130,29 @@ data class PaperMetadata(
     @SerializedName("general_instructions") val generalInstructions: List<String>?
 )
 
+data class PaperLayout(
+    val columns: Int?,
+    @SerializedName("font_family") val fontFamily: String?,
+    @SerializedName("font_size") val fontSize: Double?,
+    @SerializedName("page_size") val pageSize: String?,
+    val orientation: String?,
+    @SerializedName("option_layout") val optionLayout: String?
+) {
+    /** e.g. "2 columns · Serif · 11 pt · A4" */
+    val summary: String
+        get() = listOfNotNull(
+            columns?.let { if (it == 1) "1 column" else "$it columns" },
+            fontFamily?.replaceFirstChar { it.uppercase() },
+            fontSize?.let { "${if (it % 1.0 == 0.0) it.toInt().toString() else it.toString()} pt" },
+            pageSize,
+            orientation?.takeIf { it == "landscape" }?.let { "Landscape" }
+        ).joinToString(" · ")
+}
+
 data class Paper(
     val metadata: PaperMetadata,
-    val sections: List<Section>
+    val sections: List<Section>,
+    val layout: PaperLayout?
 ) {
     val questionCount: Int get() = sections.sumOf { it.questions.size }
 }

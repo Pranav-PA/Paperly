@@ -19,10 +19,12 @@ class DocumentExtractionService:
             extracted = cls._extract_pdf(content)
         elif ext == ".docx" or "wordprocessingml" in mime_type:
             extracted = cls._extract_docx(content)
+        elif ext in [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"] or mime_type.startswith("image/"):
+            extracted = ""  # photos are sent to Gemini as images
         elif ext in [".txt", ".csv", ".md"] or mime_type.startswith("text/"):
             extracted = content.decode("utf-8", errors="replace")
         else:
-            raise ValueError("Unsupported file type. Upload a PDF, DOCX, TXT, MD or CSV file.")
+            raise ValueError("Unsupported file type. Upload a PDF, DOCX, TXT, MD, CSV or a photo (JPG/PNG).")
         extracted = extracted.strip()
 
         # Trim to max characters

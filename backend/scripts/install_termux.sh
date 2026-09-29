@@ -25,6 +25,8 @@ pkg install -y python clang make pkg-config libxml2 libxslt libjpeg-turbo freety
 # Ready-made Termux builds of Pillow and lxml (otherwise pip compiles them, which is slow but works).
 pkg install -y python-pillow || true
 pkg install -y python-lxml || true
+# Unicode fonts so PDFs show symbols like π, √, θ, ² instead of boxes.
+pkg install -y ttf-dejavu || true
 
 echo "=== [2/5] Creating Python environment ==="
 # --system-site-packages lets the venv use the Termux Pillow/lxml installed above.

@@ -201,7 +201,7 @@ def export_solutions(
             headers={"Content-Disposition": f'attachment; filename="{filename_base}.docx"'}
         )
     elif format.lower() == "pdf":
-        pdf_bytes = PdfGenerationService.generate_pdf_bytes(schema, include_solutions=True)
+        pdf_bytes = PdfGenerationService.generate_pdf_bytes(schema, solutions_only=True)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf" if pdf_bytes.startswith(b"%PDF") else "text/html",
