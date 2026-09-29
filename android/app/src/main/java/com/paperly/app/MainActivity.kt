@@ -1,6 +1,24 @@
 package com.paperly.app
 
+import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,9 +58,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val app = application as PaperlyApp
+        val crashReport = app.takeCrashReport()
 
         setContent {
             PaperlyTheme {
+                var report by remember { mutableStateOf(crashReport) }
+                report?.let { text -> CrashReportDialog(text, onDismiss = { report = null }) }
                 val session by app.sessionStore.session.collectAsStateWithLifecycle()
                 AnimatedContent(targetState = session.isLoggedIn, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "auth") { loggedIn ->
                     if (loggedIn) {
@@ -54,6 +75,37 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+}
+
+@Composable
+private fun CrashReportDialog(report: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Paperly closed unexpectedly") },
+        text = {
+            Column {
+                Text("Sorry about that. Please share this report so it can be fixed.")
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    report,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Paperly crash report")
+                    .putExtra(Intent.EXTRA_TEXT, report)
+                runCatching { context.startActivity(Intent.createChooser(send, "Share crash report")) }
+                onDismiss()
+            }) { Text("Share report") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }
 
 @Composable

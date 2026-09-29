@@ -218,7 +218,8 @@ class AIService:
     def _normalize(schema: PaperSchema) -> PaperSchema:
         """Make numbering continuous and totals consistent with the questions actually present."""
         n = 0
-        for section in schema.sections:
+        for s_index, section in enumerate(schema.sections, start=1):
+            section.id = f"sec_{s_index}"
             for q in section.questions:
                 n += 1
                 q.question_number = n

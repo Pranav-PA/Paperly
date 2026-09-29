@@ -1,3 +1,6 @@
+# Keep class/method names so crash reports are readable (shrinking still applies).
+-dontobfuscate
+
 # Gson maps JSON onto these classes by field name via reflection.
 -keep class com.paperly.app.data.model.** { *; }
 -keepattributes Signature, *Annotation*, InnerClasses, EnclosingMethod

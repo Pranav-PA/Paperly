@@ -8,7 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -238,8 +238,8 @@ fun PaperScreen(vm: PaperViewModel, onBack: () -> Unit) {
                         }
                     }
                 }
-                paper.sections.forEach { section ->
-                    item(key = "sec-${section.id}") {
+                paper.sections.forEachIndexed { si, section ->
+                    item(key = "sec-$si") {
                         Column(Modifier.padding(top = 10.dp, start = 4.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(section.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -250,7 +250,7 @@ fun PaperScreen(vm: PaperViewModel, onBack: () -> Unit) {
                             }
                         }
                     }
-                    items(section.questions, key = { "q-${section.id}-${it.id}" }) { q ->
+                    itemsIndexed(section.questions, key = { qi, _ -> "q-$si-$qi" }) { _, q ->
                         QuestionCard(q, showAnswers) {
                             if (!vm.editing) editText = "Q${q.number}: "
                         }
@@ -366,7 +366,7 @@ private fun typeLabel(type: String) = when (type) {
 
 @Composable
 private fun QuestionCard(q: Question, showAnswers: Boolean, onTap: () -> Unit) {
-    var solutionOpen by remember(q.id) { mutableStateOf(false) }
+    var solutionOpen by remember(q.id, q.text) { mutableStateOf(false) }
     val correctLabels = remember(q.answerKey) {
         q.answerKey.orEmpty().uppercase().split(',', ' ', '&', '/').map { it.trim().trim('(', ')', '.') }.filter { it.length == 1 }.toSet()
     }

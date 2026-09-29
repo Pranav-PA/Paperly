@@ -30,6 +30,8 @@ object Files {
             true
         } catch (e: ActivityNotFoundException) {
             false
+        } catch (e: RuntimeException) {
+            false
         }
     }
 
@@ -39,7 +41,9 @@ object Files {
             .putExtra(Intent.EXTRA_STREAM, uriFor(context, file))
             .putExtra(Intent.EXTRA_SUBJECT, file.nameWithoutExtension.replace('_', ' '))
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        context.startActivity(Intent.createChooser(send, "Share paper").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        runCatching {
+            context.startActivity(Intent.createChooser(send, "Share paper").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
     }
 
     val canSaveToDownloads: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q

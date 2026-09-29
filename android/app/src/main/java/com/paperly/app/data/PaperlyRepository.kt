@@ -89,6 +89,9 @@ class PaperlyRepository(
             throw PaperlyException("Can't reach the server. Check your internet and that Paperly is running in Termux.")
         } catch (e: IllegalArgumentException) {
             throw PaperlyException("The Server URL looks invalid. Example: https://your-name.trycloudflare.com")
+        } catch (e: Exception) {
+            // e.g. the URL points at a web page instead of Paperly, so the reply isn't the JSON we expect.
+            throw PaperlyException("Unexpected reply from the server. Check the Server URL points to Paperly.")
         }
     }
 
@@ -163,13 +166,21 @@ class PaperlyRepository(
 
     suspend fun upload(conversationId: String, uri: Uri): UploadResponse {
         val (name, bytes, mime) = withContext(Dispatchers.IO) {
-            var name = "document"
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) name = c.getString(0) ?: name
+            try {
+                var name = "document"
+                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) name = c.getString(0) ?: name
+                }
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw PaperlyException("Couldn't read that file.")
+                Triple(name, bytes, contentResolver.getType(uri) ?: "application/octet-stream")
+            } catch (e: PaperlyException) {
+                throw e
+            } catch (e: Exception) {
+                throw PaperlyException("Couldn't read that file. Try saving it to your phone first.")
+            } catch (e: OutOfMemoryError) {
+                throw PaperlyException("That file is too large to upload.")
             }
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: throw PaperlyException("Couldn't read that file.")
-            Triple(name, bytes, contentResolver.getType(uri) ?: "application/octet-stream")
         }
         if (bytes.size > 15 * 1024 * 1024) throw PaperlyException("That file is larger than 15 MB.")
         val part = MultipartBody.Part.createFormData("file", name, bytes.toRequestBody(mime.toMediaTypeOrNull()))
@@ -207,7 +218,11 @@ class PaperlyRepository(
         if (job.status == "error" || job.result == null) {
             throw PaperlyException(job.error ?: "The change couldn't be applied.")
         }
-        return gson.fromJson(job.result, EditResult::class.java)
+        return try {
+            gson.fromJson(job.result, EditResult::class.java)
+        } catch (e: Exception) {
+            throw PaperlyException("The change was saved but couldn't be shown. Reopen the paper.")
+        }
     }
 
     suspend fun versions(id: String) = call { versions(id) }
@@ -239,7 +254,11 @@ class PaperlyRepository(
             val safeTitle = title.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().replace(' ', '_').ifEmpty { "Paper" }
             val dir = File(cacheDir, "exports").apply { mkdirs() }
             val file = File(dir, "$safeTitle$suffix.$format")
-            body.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+            try {
+                body.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+            } catch (e: Exception) {
+                throw PaperlyException("The download was interrupted. Please try again.")
+            }
             file
         }
     }
