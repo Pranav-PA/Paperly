@@ -3,6 +3,8 @@
 
 # Gson maps JSON onto these classes by field name via reflection.
 -keep class com.paperly.app.data.model.** { *; }
+-keep class com.paperly.app.data.Updater$* { *; }
+-keep class com.paperly.app.data.UpdateInfo { *; }
 -keepattributes Signature, *Annotation*, InnerClasses, EnclosingMethod
 # Retrofit service interface (suspend functions need generic signatures).
 -keep,allowobfuscation interface com.paperly.app.data.remote.PaperlyApi

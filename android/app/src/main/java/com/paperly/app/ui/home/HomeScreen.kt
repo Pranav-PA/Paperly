@@ -122,6 +122,7 @@ fun HomeScreen(
     vm: HomeViewModel,
     onOpenConversation: (id: String, initialPrompt: String?) -> Unit,
     onOpenPaper: (paperId: String, title: String) -> Unit,
+    onCheckUpdates: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -167,6 +168,11 @@ fun HomeScreen(
                             text = { Text("Change password") },
                             leadingIcon = { Icon(Icons.Rounded.Key, null) },
                             onClick = { menuOpen = false; showPasswordDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Check for updates") },
+                            leadingIcon = { Icon(Icons.Rounded.SystemUpdate, null) },
+                            onClick = { menuOpen = false; onCheckUpdates() }
                         )
                         DropdownMenuItem(
                             text = { Text("Sign out") },

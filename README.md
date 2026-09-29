@@ -77,6 +77,7 @@ After a few seconds it prints a box like:
 2. Open Paperly → tap **Server settings** → paste the URL from step 5 → **Test connection**.
    You should see **Connected · gemini-3.8-flash**.
 3. Sign in with one of the accounts from `credentials.txt`. Teachers can change their password from the profile menu (top-right).
+4. **Updates install from inside the app**: when a new version is released, Paperly shows an *Update available* popup → **Update** → **Install**. (The first time, Android asks you to allow Paperly to install apps; switch it on once.) You can also check manually from the profile menu → *Check for updates*.
 
 > ℹ️ The free Cloudflare URL **changes every time you restart** `start_termux.sh`. When it changes, update it in the app under *Server settings* (you'll get a "can't find the server" message as a reminder).
 
@@ -95,7 +96,7 @@ After a few seconds it prints a box like:
 | Reset one password | `python scripts/manage.py reset-password --username teacher03 --new-password New-Pass-99` |
 | Disable / enable a teacher | `python scripts/manage.py disable-user --username teacher05` |
 | Test Gemini key & model | `python scripts/manage.py check-gemini` |
-| Update Paperly | `git pull && bash scripts/install_termux.sh` |
+| Update the server | `git pull && bash scripts/install_termux.sh` |
 
 Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.8-flash`, `GEMINI_THINKING_LEVEL=medium` (use `low` for faster papers, `high` for tougher maths), `MAX_CONCURRENT_GENERATIONS=4`.
 
@@ -144,3 +145,8 @@ android/app/src/main/java/com/paperly/app/
 
 ## 📜 License
 MIT. See `LICENSE`.
+
+## 🚢 Releasing a new app version (maintainer)
+1. Bump `versionCode` and `versionName` in `android/app/build.gradle.kts`.
+2. `cd android && ./gradlew assembleRelease` (signed with the key from `keystore.properties`; always use the same key).
+3. `gh release create vX.Y.Z android/app/build/outputs/apk/release/app-release.apk#Paperly.apk --notes "..."`. The release notes appear in the app's update popup.

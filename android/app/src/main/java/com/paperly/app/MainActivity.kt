@@ -12,6 +12,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +52,8 @@ import com.paperly.app.ui.login.LoginViewModel
 import com.paperly.app.ui.paper.PaperScreen
 import com.paperly.app.ui.paper.PaperViewModel
 import com.paperly.app.ui.theme.PaperlyTheme
+import com.paperly.app.ui.update.UpdateDialog
+import com.paperly.app.ui.update.UpdateViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,10 +67,13 @@ class MainActivity : ComponentActivity() {
             PaperlyTheme {
                 var report by remember { mutableStateOf(crashReport) }
                 report?.let { text -> CrashReportDialog(text, onDismiss = { report = null }) }
+                val updateVm = paperlyViewModel("update") { UpdateViewModel(app.updater) }
+                LaunchedEffect(Unit) { updateVm.autoCheck() }
+                UpdateDialog(updateVm)
                 val session by app.sessionStore.session.collectAsStateWithLifecycle()
                 AnimatedContent(targetState = session.isLoggedIn, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "auth") { loggedIn ->
                     if (loggedIn) {
-                        MainNavigation(app)
+                        MainNavigation(app, onCheckUpdates = updateVm::manualCheck)
                     } else {
                         LoginScreen(paperlyViewModel(key = "login") { LoginViewModel(app.repository, app.sessionStore) })
                     }
@@ -113,7 +119,7 @@ inline fun <reified VM : ViewModel> paperlyViewModel(key: String, crossinline cr
     viewModel(key = key, factory = viewModelFactory { initializer { create() } })
 
 @Composable
-private fun MainNavigation(app: PaperlyApp) {
+private fun MainNavigation(app: PaperlyApp, onCheckUpdates: () -> Unit) {
     val nav = rememberNavController()
     NavHost(
         navController = nav,
@@ -129,7 +135,8 @@ private fun MainNavigation(app: PaperlyApp) {
                 onOpenConversation = { id, prompt ->
                     nav.navigate("chat/$id" + (prompt?.let { "?prompt=${Uri.encode(it)}" } ?: ""))
                 },
-                onOpenPaper = { id, _ -> nav.navigate("paper/$id") }
+                onOpenPaper = { id, _ -> nav.navigate("paper/$id") },
+                onCheckUpdates = onCheckUpdates
             )
         }
         composable(
