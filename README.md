@@ -1,172 +1,147 @@
 # Paperly 📝
 
-> **AI-Powered Question Paper Generation & Pedagogical Document Workspace for Educators**
+> **AI question papers for teachers, in minutes.** Describe the paper you need in plain words, attach a syllabus if you like, and Paperly writes a complete, answer-checked question paper you can edit by chatting and export as **PDF** or **Word (DOCX)**.
 
-Paperly replaces cumbersome 30-field test generator forms with a natural conversational assistant. Educators can describe their assessment needs in plain language, attach curriculum notes or syllabi, and Paperly researches current patterns, verifies mathematical accuracy, and generates publication-grade question papers and step-by-step solutions exported to **print-ready PDF** and **editable DOCX**.
+The backend runs on an **old Android phone (Termux)** and uses **Google Gemini 3.8 Flash**. Teachers use the **Paperly Android app** from anywhere through a free Cloudflare tunnel.
 
----
-
-## 📱 Mobile UI Showcase
-
-| Document Editor & Live Revision Drawer | Conversational Specification |
-| :---: | :---: |
-| ![Document Editor](docs/screenshots/showcase_overview.png) | ![Chat Specification](docs/screenshots/screen_3_chat.png) |
-
-| Home & Assessment Launcher | Real-Time Synthesis Stepper |
-| :---: | :---: |
-| ![Home Screen](docs/screenshots/screen_2_home.png) | ![Progress Stepper](docs/screenshots/screen_4_progress.png) |
-
-| Multi-Format Export (PDF/DOCX) | Local History & Offline Access |
-| :---: | :---: |
-| ![Export Screen](docs/screenshots/screen_6_export.png) | ![History Screen](docs/screenshots/screen_7_history.png) |
+| Sign in | Create | Chat | Paper | Export | Library (dark) |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| ![Login](docs/screenshots/login.jpg) | ![Home](docs/screenshots/home.jpg) | ![Chat](docs/screenshots/chat.jpg) | ![Paper](docs/screenshots/paper.jpg) | ![Export](docs/screenshots/export.jpg) | ![Library](docs/screenshots/library_dark.jpg) |
 
 ---
 
-## ✨ Key Features
+## ✨ Features
 
-- 💬 **Chat-First Assessment Crafting**: Describe the test naturally (e.g., *"45-question NEET Physics paper on Electrostatics, moderate difficulty"*). Paperly asks clarifying questions one at a time.
-- 📐 **STEM & Numerical Validation**: Built-in Critic Agent performs step-by-step calculations and verification scratchpads to prevent hallucinated formulas or flawed options.
-- 📎 **Source Material Grounding**: Upload textbooks, lecture slides, or past papers (PDF, DOCX, TXT) with prompt-injection isolation boundaries.
-- ✏️ **In-Place Conversational Revision**: Tap questions and chat directly against the live document (e.g., *"Replace Q3 with a numerical"*, *"Make Section B harder"*).
-- 🖨️ **Multi-Format Export**: Pure-Python vector PDF generation (ReportLab) and styled Microsoft Word documents (`.docx`).
-- 📱 **Low-Power Termux Ready**: Asynchronous FastAPI server optimized for SQLite in WAL mode with low memory footprint (<120MB RAM) designed to run on a repurposed Android smartphone.
-- 🔒 **Zero-Trust Private Deployment**: No public signups; secure admin-provisioned user accounts via CLI (`python scripts/manage.py create-user`).
+- 💬 **Chat to create**: "Class 10 Maths, Quadratic Equations, 40 marks". Paperly asks only for what's missing.
+- 📐 **Checked answers**: every numerical question is worked out and double-checked before the options are written.
+- 📎 **Use your material**: attach PDF / DOCX / TXT notes or a syllabus as reference.
+- ✏️ **Edit by chatting**: tap a question → "make Q3 harder", "add 2 case-study questions". Every change is a new version you can restore.
+- 🖨️ **Export**: question paper, answer key & solutions, or paper with answers, as PDF or Word. Open, share (WhatsApp/email) or save to Downloads.
+- 🔒 **Private**: no public sign-up. The admin creates accounts; logins are rate-limited; passwords are hashed with scrypt.
 
 ---
 
-## 🚀 Step-by-Step Quick Start Guide
+## 🚀 Setup: run the server on an old phone (Termux)
 
-### Step 1: Clone the Repository
+You need: an old Android phone (**Android 7 or newer**), Wi-Fi/mobile data on it, and ~1 GB free space.
+
+### 1. Install Termux
+Install **Termux from F-Droid** (<https://f-droid.org/packages/com.termux/>) or from its GitHub releases.
+⚠️ Don't use the Play Store version; it's outdated and its packages fail to install.
+
+### 2. Get a Gemini API key (free)
+1. Open <https://aistudio.google.com/apikey> and sign in with a Google account.
+2. Tap **Create API key** and copy it. You'll paste it in step 4.
+
+### 3. Download Paperly in Termux
+Open Termux and type these one at a time:
 ```bash
+pkg update -y && pkg install -y git
 git clone https://github.com/Pranav-PA/Paperly.git
-cd Paperly
+cd Paperly/backend
 ```
 
----
-
-### Step 2: Set Up & Configure the Backend
-
-1. **Navigate to the backend directory and set up a Python virtual environment**:
-   ```bash
-   cd backend
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-2. **Configure Environment Variables & API Key**:
-   Copy the example environment template:
-   ```bash
-   cp .env.example .env
-   ```
-   Open `.env` in your preferred editor:
-   ```env
-   # Set your Google Gemini API Key
-   GEMINI_API_KEY=your_actual_gemini_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
-
-   # Generate a secure secret for JWT tokens (e.g. openssl rand -hex 32)
-   SECRET_KEY=replace_with_a_secure_random_key_in_production
-   ```
-
-3. **Provision an Educator Account (Admin CLI)**:
-   Since Paperly uses a private deployment model with no public signups, create your teacher account via the CLI tool:
-   ```bash
-   python scripts/manage.py create-user --username teacher01 --password mypassword123 --full-name "Sarah Jenkins"
-   ```
-
-4. **Start the Backend Server**:
-   ```bash
-   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-   ```
-   - **Interactive Web Preview**: Visit `http://localhost:8000/` in your browser to experience the interactive mobile simulator.
-   - **Interactive API Documentation**: Visit `http://localhost:8000/docs`.
-
----
-
-### Step 3: Run on Android (Phone / Emulator)
-
-#### Option A: Download the Pre-Built APK (GitHub Releases)
-1. Go to the [Releases](https://github.com/Pranav-PA/Paperly/releases) tab in this repository.
-2. Download `app-debug.apk`.
-3. Sideload and install the APK on your Android device.
-
-#### Option B: Build from Source in Android Studio
-1. Open the `android/` directory in **Android Studio** (Hedgehog or newer).
-2. Sync the project with Gradle files.
-3. Configure the backend connection in `app/src/main/java/com/paperly/app/data/remote/NetworkClient.kt`:
-   - For Android Emulator: `http://10.0.2.2:8000/` (default)
-   - For Physical Device: Your Cloudflare Tunnel URL or LAN IP (`http://192.168.x.x:8000/`)
-4. Click **Run** (`Shift + F10`) to deploy to your device or emulator.
-
----
-
-### Step 4: Hosting the Backend on Termux (Repurposed Android Phone)
-
-Paperly is uniquely engineered to run directly on an Android smartphone using Termux:
-1. Install Termux on your old Android phone.
-2. Clone the repository inside Termux:
-   ```bash
-   git clone https://github.com/Pranav-PA/Paperly.git
-   cd Paperly
-   ```
-3. Run the automated installer:
-   ```bash
-   ./backend/scripts/install_termux.sh
-   ```
-4. Start the server (with CPU wake-lock to prevent OS sleep):
-   ```bash
-   ./backend/scripts/start_termux.sh
-   ```
-
----
-
-## 🧪 Automated Testing
-Run the comprehensive test suite verifying authentication, conversational generation, in-place editing, DOCX/PDF export, and prompt-injection defense:
+### 4. Run the installer (one time, ~5–15 min)
 ```bash
-PYTHONPATH=backend pytest backend/tests -v
+bash scripts/install_termux.sh
 ```
+It installs everything, **asks you to paste your Gemini API key**, creates **10 teacher accounts + 1 admin**, and tests Gemini.
+Look for `Success! Gemini replied: OK` at the end.
+
+See the logins any time:
+```bash
+cat credentials.txt
+```
+
+### 5. Start Paperly
+```bash
+bash scripts/start_termux.sh
+```
+After a few seconds it prints a box like:
+```
+  Server URL for the app (works from anywhere):
+  https://random-words-here.trycloudflare.com
+```
+**Leave Termux open.** That's your server.
+
+### 6. Keep it running reliably (recommended)
+- Android **Settings → Apps → Termux → Battery → Unrestricted** (or "Don't optimize").
+- Keep the phone **plugged in**; a wake-lock is taken automatically.
+- Pull down the Termux notification and make sure it says *wake lock held*.
 
 ---
 
-## 📂 Repository Structure
+## 📱 Setup: the app on each teacher's phone
+
+1. Download **`Paperly.apk`** from the [latest release](https://github.com/Pranav-PA/Paperly/releases/latest) and install it (allow "install unknown apps" when asked).
+2. Open Paperly → tap **Server settings** → paste the URL from step 5 → **Test connection**.
+   You should see **Connected · gemini-3.8-flash**.
+3. Sign in with one of the accounts from `credentials.txt`. Teachers can change their password from the profile menu (top-right).
+
+> ℹ️ The free Cloudflare URL **changes every time you restart** `start_termux.sh`. When it changes, update it in the app under *Server settings* (you'll get a "can't find the server" message as a reminder).
+
+---
+
+## 🛠️ Everyday commands (in Termux, inside `Paperly/backend`)
+
+| What | Command |
+| --- | --- |
+| Start server | `bash scripts/start_termux.sh` |
+| Start for same Wi-Fi only (no tunnel) | `bash scripts/start_termux.sh --lan` |
+| Stop server | `Ctrl + C` |
+| Show logins | `cat credentials.txt` |
+| New passwords for all accounts | `source .venv/bin/activate && python scripts/manage.py seed-accounts --reset` |
+| Add a teacher | `source .venv/bin/activate && python scripts/manage.py create-user --username teacher11 --password Secret-1234` |
+| Reset one password | `python scripts/manage.py reset-password --username teacher03 --new-password New-Pass-99` |
+| Disable / enable a teacher | `python scripts/manage.py disable-user --username teacher05` |
+| Test Gemini key & model | `python scripts/manage.py check-gemini` |
+| Update Paperly | `git pull && bash scripts/install_termux.sh` |
+
+Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.8-flash`, `GEMINI_THINKING_LEVEL=medium` (use `low` for faster papers, `high` for tougher maths), `MAX_CONCURRENT_GENERATIONS=2`.
+
+---
+
+## ❓ Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| App: "Can't find the server" | The tunnel URL changed. Copy the new one from Termux into *Server settings*. |
+| App: "demo mode (no Gemini key)" | Put your key in `backend/.env` (`GEMINI_API_KEY=...`), then restart the server. |
+| "Gemini rejected the API key" | Key is wrong or was deleted. Make a new one at aistudio.google.com/apikey. |
+| "rate limit or quota reached" | The free tier has per-minute limits. Wait a minute and retry. |
+| Server stops when screen is off | Set Termux battery to **Unrestricted** (step 6). |
+| Installer fails on `pydantic-core` | Your CPU has no prebuilt package; the script installs Rust and builds it (20–40 min). Keep the phone charging and run the installer again if it was interrupted. |
+
+---
+
+## 👩‍💻 Development
+
+```bash
+# Backend
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env            # add GEMINI_API_KEY (without it you get offline demo papers)
+python scripts/manage.py seed-accounts
+uvicorn app.main:app --reload   # http://localhost:8000/docs
+pytest tests -q
+
+# Android (JDK 17 + Android SDK 35)
+cd android
+./gradlew assembleDebug         # emulator reaches your PC's server at http://10.0.2.2:8000
+```
+
+**How generation works:** chat turns are answered directly; when the requirements are complete the server starts a background job (paper writing can exceed Cloudflare's 100-second request limit), and the app polls `GET /api/v1/jobs/{id}` until the paper is ready. Edits work the same way.
 
 ```text
-Paperly/
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yml           # Automated Pytest CI, Android APK build, and GitHub Release
-├── backend/
-│   ├── app/
-│   │   ├── api/v1/             # Auth, Conversations, and Papers endpoints
-│   │   ├── core/               # Configuration, SQLite WAL database, JWT security
-│   │   ├── models/             # SQLAlchemy ORM models
-│   │   ├── schemas/            # PaperSchema AST and Pydantic validation
-│   │   ├── services/           # Gemini AI orchestration, ReportLab PDF, python-docx
-│   │   └── static/             # Interactive mobile web preview & simulator
-│   ├── scripts/
-│   │   ├── manage.py           # Administrative user provisioning CLI
-│   │   ├── install_termux.sh   # Termux setup script
-│   │   └── start_termux.sh     # Termux server daemon script
-│   ├── tests/                  # Pytest test suite (10/10 passing)
-│   ├── requirements.txt        # Backend dependencies
-│   └── .env.example            # Environment template
-├── android/
-│   ├── app/
-│   │   ├── src/main/java/com/paperly/app/
-│   │   │   ├── data/local/     # Room Database, DAOs & Entities (offline-first)
-│   │   │   ├── data/remote/    # Retrofit API service & DTOs
-│   │   │   ├── data/repository/# Repositories for Auth, Chat, and Papers
-│   │   │   ├── ui/screens/     # Jetpack Compose Screens 1 to 7
-│   │   │   └── ui/theme/       # Material 3 typography and color palette
-│   │   └── build.gradle.kts    # Android app module build script
-│   ├── build.gradle.kts        # Root build script
-│   └── settings.gradle.kts     # Gradle settings
-└── docs/                       # BMAD Master Plan, System Architecture, Data Models
+backend/app/
+  api/v1/      auth, conversations, papers, jobs endpoints
+  services/    ai_service (Gemini), jobs (background tasks), pdf/docx export, text extraction
+  core/        settings, SQLite (WAL), password hashing & JWT
+android/app/src/main/java/com/paperly/app/
+  data/        Retrofit API, repository (errors, polling, downloads), session storage
+  ui/          login, home (create + library), chat, paper (viewer/editor/export), theme
 ```
 
----
-
 ## 📜 License
-Distributed under the MIT License. See `LICENSE` for more information.
+MIT. See `LICENSE`.

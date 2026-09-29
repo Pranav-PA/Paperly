@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 # Set test environment
 os.environ["DATABASE_URL"] = "sqlite:///./test_paperly.db"
 os.environ["DEBUG"] = "false"
+os.environ["GEMINI_API_KEY"] = ""  # always use the offline mock, never call the real API from tests
 
 from app.core.database import Base, get_db
 from app.core.security import get_password_hash

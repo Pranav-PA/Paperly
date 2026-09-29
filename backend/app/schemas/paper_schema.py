@@ -86,7 +86,7 @@ class PaperSchema(BaseModel):
 
 
 class PaperEditRequest(BaseModel):
-    instruction: str = Field(description="Natural language edit command (e.g. 'Replace Q5 with a numerical')")
+    instruction: str = Field(min_length=1, max_length=4000, description="Natural language edit command (e.g. 'Replace Q5 with a numerical')")
 
 
 class PaperEditResponse(BaseModel):

@@ -1,3 +1,4 @@
+import html
 import io
 from pathlib import Path
 from typing import Tuple
@@ -14,14 +15,15 @@ class DocumentExtractionService:
         ext = Path(filename).suffix.lower()
         extracted = ""
 
-        if ext == ".pdf" or "pdf" in mime_type:
+        if ext == ".pdf" or mime_type == "application/pdf":
             extracted = cls._extract_pdf(content)
-        elif ext in [".docx", ".doc"] or "word" in mime_type or "officedocument" in mime_type:
+        elif ext == ".docx" or "wordprocessingml" in mime_type:
             extracted = cls._extract_docx(content)
-        elif ext in [".txt", ".csv", ".md"]:
+        elif ext in [".txt", ".csv", ".md"] or mime_type.startswith("text/"):
             extracted = content.decode("utf-8", errors="replace")
         else:
-            extracted = content.decode("utf-8", errors="replace")
+            raise ValueError("Unsupported file type. Upload a PDF, DOCX, TXT, MD or CSV file.")
+        extracted = extracted.strip()
 
         # Trim to max characters
         if len(extracted) > cls.MAX_CHARACTERS:
@@ -29,7 +31,7 @@ class DocumentExtractionService:
 
         # Wrap in safe prompt-injection isolation delimiters
         safe_wrapped = (
-            f'<untrusted_source_material filename="{filename}">\n'
+            f'<untrusted_source_material filename="{html.escape(filename)}">\n'
             f"{extracted}\n"
             f"</untrusted_source_material>"
         )

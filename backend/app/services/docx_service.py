@@ -6,12 +6,12 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 
-from app.schemas.paper_schema import PaperSchema, QuestionType
+from app.schemas.paper_schema import PaperSchema
 
 
 class DocxGenerationService:
     @classmethod
-    def generate_question_paper_docx(cls, schema: PaperSchema) -> bytes:
+    def generate_question_paper_docx(cls, schema: PaperSchema, include_solutions: bool = False) -> bytes:
         """Renders PaperSchema into a publication-grade DOCX examination paper."""
         doc = Document()
 
@@ -59,7 +59,7 @@ class DocxGenerationService:
         table.cell(0, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
         duration_str = f"{meta.duration_minutes} Minutes"
-        table.cell(1, 0).paragraphs[0].text = f"Date: {meta.date or 'Academic Session'}"
+        table.cell(1, 0).paragraphs[0].text = f"Date: {meta.date or '____________'}"
         table.cell(1, 1).paragraphs[0].text = f"Time Allowed: {duration_str}"
         table.cell(1, 1).paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
@@ -109,6 +109,8 @@ class DocxGenerationService:
 
             for q in section.questions:
                 cls._render_question_docx(doc, q)
+                if include_solutions:
+                    cls._render_solution_docx(doc, q)
 
         # Save to buffer
         buffer = io.BytesIO()
@@ -131,12 +133,12 @@ class DocxGenerationService:
         r_text.font.size = Pt(10.5)
 
         # Right-aligned marks indicator
-        r_marks = p_q.add_run(f"  [{q.marks:g} Marks]")
+        r_marks = p_q.add_run(f"  [{q.marks:g} Mark{'' if q.marks == 1 else 's'}]")
         r_marks.bold = True
         r_marks.font.size = Pt(9.5)
 
         # Render options for MCQ
-        if q.options and q.type in [QuestionType.MCQ, QuestionType.MULTI_SELECT]:
+        if q.options:
             for opt in q.options:
                 p_opt = doc.add_paragraph()
                 p_opt.paragraph_format.left_indent = Inches(0.3)
@@ -146,6 +148,24 @@ class DocxGenerationService:
                 r_opt_label.font.size = Pt(10)
                 r_opt_text = p_opt.add_run(opt.text)
                 r_opt_text.font.size = Pt(10)
+
+    @staticmethod
+    def _render_solution_docx(doc: Document, q) -> None:
+        if not (q.answer_key or q.detailed_solution):
+            return
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Inches(0.3)
+        p.paragraph_format.space_after = Pt(4)
+        if q.answer_key:
+            r = p.add_run(f"Answer: {q.answer_key}")
+            r.bold = True
+            r.font.size = Pt(9.5)
+            r.font.color.rgb = RGBColor(0x00, 0x33, 0x66)
+        if q.detailed_solution:
+            r = p.add_run(f"\nSolution: {q.detailed_solution}")
+            r.italic = True
+            r.font.size = Pt(9.5)
+            r.font.color.rgb = RGBColor(0x00, 0x33, 0x66)
 
     @classmethod
     def generate_solutions_docx(cls, schema: PaperSchema) -> bytes:

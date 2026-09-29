@@ -64,3 +64,11 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Paperly backend secrets
+backend/.secret_key
+backend/credentials.txt
+backend/tunnel.log
+android/keystore.properties
+*.jks
+*.keystore

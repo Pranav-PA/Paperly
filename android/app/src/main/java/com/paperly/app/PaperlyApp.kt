@@ -1,30 +1,18 @@
 package com.paperly.app
 
 import android.app.Application
-import com.paperly.app.data.local.PaperlyDatabase
-import com.paperly.app.data.repository.AuthRepository
-import com.paperly.app.data.repository.ConversationRepository
-import com.paperly.app.data.repository.PaperRepository
+import com.paperly.app.data.PaperlyRepository
+import com.paperly.app.data.SessionStore
 
 class PaperlyApp : Application() {
-
-    lateinit var database: PaperlyDatabase
+    lateinit var sessionStore: SessionStore
         private set
-
-    lateinit var authRepository: AuthRepository
-        private set
-
-    lateinit var conversationRepository: ConversationRepository
-        private set
-
-    lateinit var paperRepository: PaperRepository
+    lateinit var repository: PaperlyRepository
         private set
 
     override fun onCreate() {
         super.onCreate()
-        database = PaperlyDatabase.getInstance(this)
-        authRepository = AuthRepository(database.userDao())
-        conversationRepository = ConversationRepository(database.conversationDao(), database.messageDao())
-        paperRepository = PaperRepository(database.paperDao())
+        sessionStore = SessionStore(this)
+        repository = PaperlyRepository(sessionStore, cacheDir, contentResolver)
     }
 }

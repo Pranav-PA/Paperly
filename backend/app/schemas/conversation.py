@@ -8,7 +8,7 @@ class ConversationCreate(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str = Field(min_length=1, description="Teacher prompt or instruction")
+    content: str = Field(min_length=1, max_length=8000, description="Teacher prompt or instruction")
 
 
 class MessageResponse(BaseModel):
@@ -27,13 +27,14 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    latest_paper_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ConversationDetail(ConversationSummary):
     messages: List[MessageResponse] = []
-    latest_paper_id: Optional[str] = None
+    active_job_id: Optional[str] = None
 
 
 class FileUploadResponse(BaseModel):

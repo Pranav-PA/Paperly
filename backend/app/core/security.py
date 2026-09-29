@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import bcrypt
+import base64
+import hashlib
+import hmac
+import secrets
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -14,15 +17,33 @@ from app.schemas.auth import TokenPayload
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify plain password against bcrypt hash."""
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+# scrypt from the standard library: strong, and needs no compiled extension on Termux.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
+
+
+def _scrypt(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    return hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32)
 
 
 def get_password_hash(password: str) -> str:
-    """Hash password using bcrypt."""
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+    """Hash password as 'scrypt$n$r$p$salt$hash' (base64 fields)."""
+    salt = secrets.token_bytes(16)
+    digest = _scrypt(password, salt, _SCRYPT_N, _SCRYPT_R, _SCRYPT_P)
+    b64 = lambda b: base64.b64encode(b).decode("ascii")
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${b64(salt)}${b64(digest)}"
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify plain password against a stored scrypt hash."""
+    try:
+        scheme, n, r, p, salt_b64, digest_b64 = hashed_password.split("$")
+        if scheme != "scrypt":
+            return False
+        expected = base64.b64decode(digest_b64)
+        actual = _scrypt(plain_password, base64.b64decode(salt_b64), int(n), int(r), int(p))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, expected)
 
 
 def create_access_token(subject: str, role: str = "teacher", expires_delta: Optional[timedelta] = None) -> str:

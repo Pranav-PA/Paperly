@@ -16,7 +16,12 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 
-from app.schemas.paper_schema import PaperSchema, QuestionType
+from app.schemas.paper_schema import PaperSchema
+
+
+def _esc(text: str) -> str:
+    """Escape for ReportLab's mini-markup while keeping line breaks."""
+    return html.escape(text).replace("\n", "<br/>")
 
 
 class PdfGenerationService:
@@ -122,7 +127,7 @@ class PdfGenerationService:
                 Paragraph(f"<b>Max Marks:</b> {meta.total_marks:g}", ParagraphStyle("Right", parent=body_style, alignment=2)),
             ],
             [
-                Paragraph(f"<b>Date:</b> {html.escape(meta.date or 'Academic Session')}", body_style),
+                Paragraph(f"<b>Date:</b> {html.escape(meta.date or '____________')}", body_style),
                 Paragraph(f"<b>Time Allowed:</b> {meta.duration_minutes} Mins", ParagraphStyle("Right2", parent=body_style, alignment=2)),
             ],
         ]
@@ -149,25 +154,25 @@ class PdfGenerationService:
 
         # 4. Sections & Questions
         for sec in schema.sections:
-            elements.append(Paragraph(html.escape(sec.title.upper()), section_style))
+            elements.append(Paragraph(_esc(sec.title.upper()), section_style))
             if sec.instructions:
-                elements.append(Paragraph(f"<i>({html.escape(sec.instructions)})</i>", ParagraphStyle("SecInst", parent=body_style, fontSize=9, alignment=1, spaceAfter=4)))
+                elements.append(Paragraph(f"<i>({_esc(sec.instructions)})</i>", ParagraphStyle("SecInst", parent=body_style, fontSize=9, alignment=1, spaceAfter=4)))
 
             for q in sec.questions:
                 q_elements = []
-                q_text = f"<b>Q{q.question_number}.</b> {html.escape(q.text)}  <b>[{q.marks:g} Marks]</b>"
+                q_text = f"<b>Q{q.question_number}.</b> {_esc(q.text)}  <b>[{q.marks:g} Mark{'' if q.marks == 1 else 's'}]</b>"
                 q_elements.append(Paragraph(q_text, question_style))
 
-                if q.options and q.type in [QuestionType.MCQ, QuestionType.MULTI_SELECT]:
+                if q.options:
                     for opt in q.options:
-                        opt_str = f"<b>({opt.label})</b> {html.escape(opt.text)}"
+                        opt_str = f"<b>({opt.label})</b> {_esc(opt.text)}"
                         q_elements.append(Paragraph(opt_str, option_style))
 
                 if include_solutions and (q.answer_key or q.detailed_solution):
                     if q.answer_key:
-                        q_elements.append(Paragraph(f"<b>Answer:</b> {html.escape(q.answer_key)}", solution_style))
+                        q_elements.append(Paragraph(f"<b>Answer:</b> {_esc(q.answer_key)}", solution_style))
                     if q.detailed_solution:
-                        q_elements.append(Paragraph(f"<b>Solution:</b> {html.escape(q.detailed_solution)}", solution_style))
+                        q_elements.append(Paragraph(f"<b>Solution:</b> {_esc(q.detailed_solution)}", solution_style))
 
                 elements.append(KeepTogether(q_elements))
                 elements.append(Spacer(1, 3))

@@ -1,5 +1,19 @@
+import secrets
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_SECRET_KEY_FILE = BACKEND_DIR / ".secret_key"
+
+
+def _load_or_create_secret_key() -> str:
+    """Persist a random signing key on first run so tokens survive restarts."""
+    if _SECRET_KEY_FILE.exists():
+        return _SECRET_KEY_FILE.read_text().strip()
+    key = secrets.token_hex(32)
+    _SECRET_KEY_FILE.write_text(key)
+    _SECRET_KEY_FILE.chmod(0o600)
+    return key
 
 
 class Settings(BaseSettings):
@@ -8,30 +22,40 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
-    # Security & Auth
-    SECRET_KEY: str = "dev_secret_key_paperly_2026_super_secure_32bytes_min!"
+    # Security & Auth. Leave SECRET_KEY empty to use an auto-generated key stored in .secret_key
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30 days
 
     # Database
-    DATABASE_URL: str = "sqlite:///./paperly.db"
+    DATABASE_URL: str = f"sqlite:///{BACKEND_DIR / 'paperly.db'}"
 
     # Storage
-    UPLOAD_DIR: str = "./uploads"
-    GENERATED_PAPERS_DIR: str = "./generated_papers"
+    UPLOAD_DIR: str = str(BACKEND_DIR / "uploads")
+    GENERATED_PAPERS_DIR: str = str(BACKEND_DIR / "generated_papers")
+    MAX_UPLOAD_MB: int = 15
 
     # AI Service (Google Gemini)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    # Gemini 3.x thinking depth: low | medium | high. Chat turns always use "low".
+    GEMINI_THINKING_LEVEL: str = "medium"
 
     # Performance & Concurrency on Termux
     MAX_CONCURRENT_GENERATIONS: int = 2
 
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).resolve().parent.parent.parent / ".env"),
+        env_file=str(BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @property
+    def ai_enabled(self) -> bool:
+        return bool(self.GEMINI_API_KEY) and self.GEMINI_API_KEY not in (
+            "dummy_key_for_testing",
+            "your_gemini_api_key_here",
+        )
 
     def ensure_directories(self) -> None:
         Path(self.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -39,4 +63,6 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+if not settings.SECRET_KEY or settings.SECRET_KEY.startswith("change_this"):
+    settings.SECRET_KEY = _load_or_create_secret_key()
 settings.ensure_directories()
