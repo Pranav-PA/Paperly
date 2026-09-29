@@ -1,0 +1,1198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paperly — Pedagogical Assessment Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-studio: #0A0F1D;
+      --bg-card: #131B2E;
+      --accent-blue: #2563EB;
+      --accent-blue-light: #3B82F6;
+      --accent-emerald: #059669;
+      --accent-amber: #D97706;
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      --phone-w: 390px;
+      --phone-h: 810px;
+      --app-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --paper-font: 'Newsreader', Georgia, serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg-studio);
+      font-family: var(--app-font);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 40px;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(37, 99, 235, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 85% 85%, rgba(5, 150, 105, 0.08) 0%, transparent 45%);
+    }
+
+    /* Studio Header */
+    .studio-header {
+      text-align: center;
+      max-width: 800px;
+      margin-bottom: 24px;
+    }
+
+    .studio-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(37, 99, 235, 0.15);
+      border: 1px solid rgba(37, 99, 235, 0.3);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: #60A5FA;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    .studio-title {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #FFFFFF 30%, #94A3B8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+
+    .studio-sub {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* Screen Selector Bar */
+    .screen-nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 6px;
+      margin-bottom: 28px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .nav-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--app-font);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nav-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-btn.active {
+      background: var(--accent-blue);
+      color: #FFFFFF;
+      box-shadow: 0 2px 10px rgba(37, 99, 235, 0.4);
+    }
+
+    /* Phone Device Chassis */
+    .phone-container {
+      position: relative;
+      width: var(--phone-w);
+      height: var(--phone-h);
+      background: #000;
+      border-radius: 48px;
+      box-shadow: 
+        0 0 0 10px #1E293B,
+        0 0 0 12px #334155,
+        0 25px 60px rgba(0, 0, 0, 0.7);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 3px solid #000;
+    }
+
+    /* Phone Notch / Island */
+    .phone-top-bar {
+      height: 40px;
+      background: #000;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 24px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      z-index: 50;
+      user-select: none;
+    }
+
+    .dynamic-island {
+      width: 100px;
+      height: 22px;
+      background: #000;
+      border-radius: 20px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 8px;
+    }
+
+    .camera-dot {
+      width: 10px;
+      height: 10px;
+      background: #0F172A;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Screen Viewport */
+    .screen-viewport {
+      flex: 1;
+      background: #F8FAFC;
+      color: #0F172A;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Screen Transition */
+    .screen-pane {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      height: 100%;
+    }
+
+    .screen-pane.active {
+      display: flex;
+    }
+
+    /* UI TopAppBar */
+    .app-topbar {
+      height: 52px;
+      background: #FFFFFF;
+      border-bottom: 1px solid #E2E8F0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .topbar-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+
+    .topbar-sub {
+      font-size: 11px;
+      color: #64748B;
+    }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #334155;
+      font-size: 16px;
+      transition: background 0.15s;
+    }
+
+    .icon-btn:hover {
+      background: #F1F5F9;
+    }
+
+    /* =========================================================
+       SCREEN 1: LOGIN
+       ========================================================= */
+    .login-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 28px;
+      background: #FFFFFF;
+      text-align: center;
+    }
+
+    .login-logo {
+      width: 64px;
+      height: 64px;
+      background: linear-gradient(135deg, #2563EB, #1D4ED8);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 28px;
+      margin-bottom: 18px;
+      box-shadow: 0 10px 20px rgba(37, 99, 235, 0.3);
+    }
+
+    .login-heading {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #0F172A;
+    }
+
+    .login-sub {
+      font-size: 12px;
+      color: #64748B;
+      margin-top: 4px;
+      margin-bottom: 24px;
+    }
+
+    .input-group {
+      width: 100%;
+      text-align: left;
+      margin-bottom: 14px;
+    }
+
+    .input-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .app-input {
+      width: 100%;
+      height: 44px;
+      padding: 0 12px;
+      border: 1px solid #CBD5E1;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #0F172A;
+      background: #F8FAFC;
+      transition: border 0.15s;
+    }
+
+    .app-input:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+      background: #FFFFFF;
+    }
+
+    .app-btn-primary {
+      width: 100%;
+      height: 46px;
+      background: var(--accent-blue);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+      transition: all 0.2s;
+    }
+
+    .app-btn-primary:hover {
+      background: #1D4ED8;
+    }
+
+    .deployment-badge {
+      margin-top: 32px;
+      font-size: 10.5px;
+      color: #94A3B8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* =========================================================
+       SCREEN 2: HOME
+       ========================================================= */
+    .home-content {
+      padding: 16px;
+      flex: 1;
+    }
+
+    .welcome-card {
+      background: #FFFFFF;
+      border-radius: 14px;
+      padding: 16px;
+      border: 1px solid #E2E8F0;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+    }
+
+    .tag-bubble {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--accent-blue);
+      background: #EFF6FF;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    .quick-input-bar {
+      display: flex;
+      align-items: center;
+      background: #FFFFFF;
+      border: 1px solid #CBD5E1;
+      border-radius: 10px;
+      padding: 4px 8px 4px 12px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    }
+
+    .quick-input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+
+    .topic-chips {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+      margin-bottom: 16px;
+    }
+
+    .chip {
+      background: #FFFFFF;
+      border: 1px solid #CBD5E1;
+      padding: 5px 10px;
+      border-radius: 16px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      color: #334155;
+    }
+
+    .chip:hover {
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    .paper-card {
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      transition: border 0.15s, transform 0.15s;
+    }
+
+    .paper-card:hover {
+      border-color: var(--accent-blue);
+      transform: translateY(-1px);
+    }
+
+    .paper-card-icon {
+      width: 36px;
+      height: 36px;
+      background: #EFF6FF;
+      color: var(--accent-blue);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    /* =========================================================
+       SCREEN 3: CHAT
+       ========================================================= */
+    .chat-messages {
+      flex: 1;
+      padding: 14px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .msg-row {
+      display: flex;
+      width: 100%;
+    }
+
+    .msg-row.user {
+      justify-content: flex-end;
+    }
+
+    .msg-row.ai {
+      justify-content: flex-start;
+    }
+
+    .msg-bubble {
+      max-width: 82%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 12.5px;
+      line-height: 1.45;
+    }
+
+    .msg-bubble.user {
+      background: var(--accent-blue);
+      color: #fff;
+      border-bottom-right-radius: 2px;
+    }
+
+    .msg-bubble.ai {
+      background: #FFFFFF;
+      color: #0F172A;
+      border: 1px solid #E2E8F0;
+      border-bottom-left-radius: 2px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+
+    .msg-sender {
+      font-size: 10px;
+      font-weight: 700;
+      color: #0D9488;
+      margin-bottom: 2px;
+    }
+
+    .chat-bottom-bar {
+      background: #FFFFFF;
+      border-top: 1px solid #E2E8F0;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .paper-ready-pill {
+      background: #DCFCE7;
+      color: #166534;
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    /* =========================================================
+       SCREEN 4: PROGRESS STEPPER
+       ========================================================= */
+    .progress-content {
+      padding: 24px 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .progress-card {
+      background: #FFFFFF;
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid #E2E8F0;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+    }
+
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 12.5px;
+    }
+
+    .step-indicator {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    .step-indicator.done {
+      background: #16A34A;
+      color: #fff;
+    }
+
+    .step-indicator.active {
+      border: 2.5px solid var(--accent-blue);
+      border-top-color: transparent;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .step-indicator.pending {
+      background: #E2E8F0;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* =========================================================
+       SCREEN 5: DOCUMENT EDITOR
+       ========================================================= */
+    .editor-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #E2E8F0;
+      overflow: hidden;
+    }
+
+    .a4-paper {
+      margin: 10px;
+      background: #FFFDF9;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      padding: 16px;
+      flex: 1;
+      overflow-y: auto;
+      font-family: var(--paper-font);
+      font-size: 11px;
+      line-height: 1.4;
+      color: #111;
+      border: 1px solid #D1D5DB;
+    }
+
+    .exam-inst-name {
+      text-align: center;
+      font-weight: bold;
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      font-family: var(--app-font);
+    }
+
+    .exam-paper-title {
+      text-align: center;
+      font-weight: 600;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .exam-meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin: 8px 0;
+      font-size: 10px;
+      font-family: var(--app-font);
+      border-top: 1px solid #111;
+      border-bottom: 1px solid #111;
+      padding: 4px 0;
+    }
+
+    .sec-badge {
+      text-align: center;
+      font-weight: bold;
+      font-family: var(--app-font);
+      font-size: 11px;
+      margin: 10px 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .q-item {
+      margin-bottom: 8px;
+    }
+
+    .q-stem {
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .q-options-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 10px;
+      margin-top: 3px;
+      padding-left: 14px;
+      font-size: 10px;
+    }
+
+    .revision-drawer {
+      background: #FFFFFF;
+      border-top: 1px solid #CBD5E1;
+      padding: 10px 14px;
+      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+    }
+
+    .revision-input {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* =========================================================
+       SCREEN 6: EXPORT
+       ========================================================= */
+    .export-content {
+      padding: 20px;
+    }
+
+    .export-box {
+      background: #FFFFFF;
+      border-radius: 14px;
+      padding: 20px;
+      border: 1px solid #E2E8F0;
+    }
+
+    .radio-card {
+      border: 1.5px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+    }
+
+    .radio-card.active {
+      border-color: var(--accent-blue);
+      background: #EFF6FF;
+    }
+
+    /* =========================================================
+       SCREEN 7: HISTORY
+       ========================================================= */
+    .history-list {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .offline-tag {
+      background: #DCFCE7;
+      color: #166534;
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="studio-header">
+    <div class="studio-badge">✨ Live Interactive Experience</div>
+    <h1 class="studio-title">Paperly Mobile Presence</h1>
+    <p class="studio-sub">Experience the 7 Jetpack Compose screens crafted for educators. Switch between views below or test live edits against the document.</p>
+  </header>
+
+  <!-- Interactive Screen Switcher Navigation -->
+  <nav class="screen-nav">
+    <button class="nav-btn active" onclick="switchScreen('login')">1. Login</button>
+    <button class="nav-btn" onclick="switchScreen('home')">2. Home</button>
+    <button class="nav-btn" onclick="switchScreen('chat')">3. Active Chat</button>
+    <button class="nav-btn" onclick="switchScreen('progress')">4. Progress Stepper</button>
+    <button class="nav-btn" onclick="switchScreen('editor')">5. Document Editor</button>
+    <button class="nav-btn" onclick="switchScreen('export')">6. Export</button>
+    <button class="nav-btn" onclick="switchScreen('history')">7. My Papers</button>
+  </nav>
+
+  <!-- High-Fidelity Mobile Frame -->
+  <div class="phone-container">
+    <!-- Status Bar -->
+    <div class="phone-top-bar">
+      <span>9:41</span>
+      <div class="dynamic-island">
+        <div class="camera-dot"></div>
+      </div>
+      <span>5G 100%</span>
+    </div>
+
+    <!-- Active Screen Viewport -->
+    <div class="screen-viewport">
+
+      <!-- ================= SCREEN 1: LOGIN ================= -->
+      <div id="screen-login" class="screen-pane active">
+        <div class="login-container">
+          <div class="login-logo">📝</div>
+          <h2 class="login-heading">PAPERLY</h2>
+          <p class="login-sub">Pedagogical Workspace for Educators</p>
+
+          <div class="input-group">
+            <label class="input-label">Username</label>
+            <input type="text" class="app-input" id="login-user" value="teacher01">
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Password</label>
+            <input type="password" class="app-input" id="login-pass" value="teachersecret">
+          </div>
+
+          <button class="app-btn-primary" onclick="handleLogin()">
+            <span>SIGN IN TO PAPERLY</span>
+          </button>
+
+          <div class="deployment-badge">
+            <span>🔒 Managed Private Deployment v1.0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 2: HOME ================= -->
+      <div id="screen-home" class="screen-pane">
+        <div class="app-topbar">
+          <span class="topbar-title">Paperly</span>
+          <button class="icon-btn" onclick="switchScreen('history')">📁</button>
+        </div>
+        <div class="home-content">
+          <div class="welcome-card">
+            <span class="tag-bubble">AI Teaching Assistant</span>
+            <h3 style="font-size: 17px; font-weight: 700; margin-bottom: 4px;">What would you like to create today?</h3>
+            <p style="font-size: 11.5px; color: #64748B;">Talk naturally to Paperly or select an assessment template:</p>
+          </div>
+
+          <div class="quick-input-bar">
+            <input type="text" id="quick-prompt-input" class="quick-input" placeholder="Create a NEET Physics mock test on Electrostatics...">
+            <button class="icon-btn" style="color: var(--accent-blue);" onclick="startChatFromHome()">➤</button>
+          </div>
+
+          <div class="topic-chips">
+            <div class="chip" onclick="setQuickPrompt('Class 12 Physics: Wave Optics 35 marks')">⚡ Wave Optics (Class 12)</div>
+            <div class="chip" onclick="setQuickPrompt('NEET 2026 Physics Mock: Electrostatics 45Q')">🎯 NEET Electrostatics</div>
+            <div class="chip" onclick="setQuickPrompt('CBSE Class 10 Math: Quadratic Equations')">📐 Quadratic Equations</div>
+          </div>
+
+          <div style="font-size: 12.5px; font-weight: 700; margin-bottom: 8px; color: #334155;">Recent Assessments</div>
+
+          <div class="paper-card" onclick="switchScreen('editor')">
+            <div class="paper-card-icon">⚡</div>
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 600;">Physics — Electrostatics Mock</div>
+              <div style="font-size: 11px; color: var(--accent-emerald);">● Generated & Ready</div>
+            </div>
+            <span style="font-size: 12px; color: #94A3B8;">›</span>
+          </div>
+
+          <div class="paper-card" onclick="switchScreen('editor')">
+            <div class="paper-card-icon">📐</div>
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 600;">Class 10 Mathematics Unit Test</div>
+              <div style="font-size: 11px; color: #64748B;">Edited yesterday</div>
+            </div>
+            <span style="font-size: 12px; color: #94A3B8;">›</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 3: ACTIVE CHAT ================= -->
+      <div id="screen-chat" class="screen-pane">
+        <div class="app-topbar">
+          <div>
+            <div class="topbar-title">NEET Physics Test</div>
+            <div class="topbar-sub">Requirements Gathering</div>
+          </div>
+          <button class="icon-btn" onclick="switchScreen('editor')" title="View Paper">📄</button>
+        </div>
+
+        <div class="paper-ready-pill" id="chat-ready-banner">
+          <span>✓ Paper synthesized & validated!</span>
+          <span style="cursor: pointer; text-decoration: underline;" onclick="switchScreen('editor')">Open Editor ›</span>
+        </div>
+
+        <div class="chat-messages" id="chat-box">
+          <div class="msg-row user">
+            <div class="msg-bubble user">I need a NEET Physics paper on Electrostatics.</div>
+          </div>
+          <div class="msg-row ai">
+            <div class="msg-bubble ai">
+              <div class="msg-sender">Paperly</div>
+              What difficulty level would you like to target?
+            </div>
+          </div>
+          <div class="msg-row user">
+            <div class="msg-bubble user">Moderate to difficult. 45 questions.</div>
+          </div>
+          <div class="msg-row ai">
+            <div class="msg-bubble ai">
+              <div class="msg-sender">Paperly</div>
+              Understood! Should I follow the official NEET 2026 marking pattern (+4, -1) and generate the answer key with numerical solutions?
+            </div>
+          </div>
+          <div class="msg-row user">
+            <div class="msg-bubble user">Yes, follow current NEET pattern and include solutions.</div>
+          </div>
+          <div class="msg-row ai">
+            <div class="msg-bubble ai">
+              <div class="msg-sender">Paperly</div>
+              All requirements captured! Beginning research, STEM calculation validation, and document synthesis.
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-bottom-bar">
+          <button class="icon-btn" title="Attach Document" onclick="alert('Attached: Chapter_Electrostatics.pdf (18.4 KB extracted)')">📎</button>
+          <input type="text" id="chat-input" class="app-input" style="height: 38px;" placeholder="Answer Paperly or add details...">
+          <button class="icon-btn" style="color: var(--accent-blue);" onclick="sendChatMessage()">➤</button>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 4: PROGRESS STEPPER ================= -->
+      <div id="screen-progress" class="screen-pane">
+        <div class="app-topbar">
+          <span class="topbar-title">Creating your paper</span>
+        </div>
+        <div class="progress-content">
+          <div class="progress-card">
+            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 16px;">NEET Physics Mock Test</h3>
+
+            <div class="step-item">
+              <div class="step-indicator done">✓</div>
+              <div><b>Requirements collected</b> (45Q, Moderate-Hard)</div>
+            </div>
+            <div class="step-item">
+              <div class="step-indicator done">✓</div>
+              <div><b>Official NEET pattern researched</b> (+4, -1)</div>
+            </div>
+            <div class="step-item">
+              <div class="step-indicator done">✓</div>
+              <div><b>Source materials analyzed</b> (Gauss Law & Potential)</div>
+            </div>
+            <div class="step-item">
+              <div class="step-indicator done">✓</div>
+              <div><b>45 Questions generated</b></div>
+            </div>
+            <div class="step-item">
+              <div class="step-indicator active"></div>
+              <div><b>Validating STEM calculations & keys...</b></div>
+            </div>
+            <div class="step-item">
+              <div class="step-indicator pending"></div>
+              <div style="color: #94A3B8;">Creating publication document</div>
+            </div>
+
+            <div style="margin-top: 20px; font-size: 11px; color: #64748B; text-align: center; font-style: italic;">
+              Estimated completion in 3 seconds...
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 5: DOCUMENT EDITOR ================= -->
+      <div id="screen-editor" class="screen-pane">
+        <div class="app-topbar">
+          <div>
+            <div class="topbar-title">Physics Mock Test</div>
+            <div class="topbar-sub">Version 2 (Active)</div>
+          </div>
+          <div>
+            <button class="icon-btn" onclick="switchScreen('history')" title="Versions">⏮</button>
+            <button class="icon-btn" style="color: var(--accent-blue);" onclick="switchScreen('export')" title="Export">⬇</button>
+          </div>
+        </div>
+
+        <div class="editor-wrapper">
+          <!-- A4 Examination Sheet -->
+          <div class="a4-paper" id="paper-sheet">
+            <div class="exam-inst-name">DELHI PUBLIC SCHOOL, R.K. PURAM</div>
+            <div class="exam-paper-title">PHYSICS PERIODIC ASSESSMENT 2026</div>
+            <div style="text-align: center; font-size: 9.5px; font-style: italic;">Curriculum Alignment: NEET / CBSE Class XII</div>
+
+            <div class="exam-meta-grid">
+              <div><b>Subject:</b> Physics (XII)</div>
+              <div style="text-align: right;"><b>Max Marks:</b> 45</div>
+              <div><b>Date:</b> Academic Session 2026</div>
+              <div style="text-align: right;"><b>Time:</b> 60 Minutes</div>
+            </div>
+
+            <div style="font-size: 9.5px; margin-bottom: 6px;">
+              <b>General Instructions:</b><br>
+              1. All questions are compulsory.<br>
+              2. Section A consists of Multiple Choice Questions carrying 1 mark each.<br>
+              3. Section B consists of Numerical & Short-Answer Problems.
+            </div>
+
+            <div class="sec-badge">Section A: Multiple Choice Questions</div>
+
+            <div class="q-item" id="q1-block">
+              <div class="q-stem">
+                <span><b>Q1.</b> The electric flux through a closed Gaussian surface enclosing charge $Q$ is:</span>
+                <b>[1M]</b>
+              </div>
+              <div class="q-options-grid">
+                <div>(A) $Q / \varepsilon_0$</div>
+                <div>(B) $Q \cdot \varepsilon_0$</div>
+                <div>(C) $2Q / \varepsilon_0$</div>
+                <div>(D) Zero</div>
+              </div>
+            </div>
+
+            <div class="q-item" id="q2-block">
+              <div class="q-stem">
+                <span><b>Q2.</b> Two point charges $+2\mu\text{C}$ and $-2\mu\text{C}$ are separated by $10\text{ cm}$. The electric potential at the midpoint is:</span>
+                <b>[1M]</b>
+              </div>
+              <div class="q-options-grid">
+                <div>(A) $3.6 \times 10^5\text{ V}$</div>
+                <div>(B) Zero</div>
+                <div>(C) $-1.8 \times 10^5\text{ V}$</div>
+                <div>(D) $7.2 \times 10^5\text{ V}$</div>
+              </div>
+            </div>
+
+            <div class="sec-badge">Section B: Numerical & Concept Problems</div>
+
+            <div class="q-item" id="q3-block">
+              <div class="q-stem">
+                <span><b>Q3.</b> A parallel plate capacitor has plate area $A = 100\text{ cm}^2$ and separation $d = 2\text{ mm}$. Calculate its capacitance and charge when connected to a $100\text{ V}$ supply.</span>
+                <b>[3M]</b>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Conversational Revision Drawer -->
+          <div class="revision-drawer">
+            <div style="font-size: 10.5px; color: #64748B; margin-bottom: 4px;">Ask Paperly to edit (e.g. "Replace Q2", "Make Q1 harder")</div>
+            <div class="revision-input">
+              <input type="text" id="edit-instruction-input" class="app-input" style="height: 38px; font-size: 12px;" placeholder="Replace Q2 with a capacitor numerical...">
+              <button class="app-btn-primary" style="width: 70px; height: 38px;" onclick="applyDocumentEdit()">Apply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 6: EXPORT ================= -->
+      <div id="screen-export" class="screen-pane">
+        <div class="app-topbar">
+          <span class="topbar-title">Export Document</span>
+          <button class="icon-btn" onclick="switchScreen('editor')">✕</button>
+        </div>
+        <div class="export-content">
+          <div class="export-box">
+            <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 4px;">Physics Periodic Assessment</h3>
+            <p style="font-size: 11.5px; color: #64748B; margin-bottom: 16px;">Choose format for immediate download:</p>
+
+            <div class="radio-card active" id="opt-pdf" onclick="selectExportFormat('pdf')">
+              <input type="radio" name="export-fmt" checked>
+              <div>
+                <div style="font-size: 13px; font-weight: 600;">PDF Document</div>
+                <div style="font-size: 10.5px; color: #64748B;">Print-ready layout via ReportLab</div>
+              </div>
+            </div>
+
+            <div class="radio-card" id="opt-docx" onclick="selectExportFormat('docx')">
+              <input type="radio" name="export-fmt">
+              <div>
+                <div style="font-size: 13px; font-weight: 600;">Microsoft Word (.docx)</div>
+                <div style="font-size: 10.5px; color: #64748B;">Fully editable with tables & formatting</div>
+              </div>
+            </div>
+
+            <div style="margin: 14px 0; display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="check-solutions" checked>
+              <label for="check-solutions" style="font-size: 12px; font-weight: 500;">Include Answer Key & Step-by-Step Solutions</label>
+            </div>
+
+            <button class="app-btn-primary" onclick="triggerDownload()">
+              <span>DOWNLOAD ASSESSMENT</span>
+            </button>
+
+            <div id="export-success-msg" style="display: none; margin-top: 14px; background: #DCFCE7; color: #166534; padding: 10px; border-radius: 8px; font-size: 11.5px; font-weight: 600; text-align: center;">
+              ✓ Download initiated successfully!
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SCREEN 7: HISTORY ================= -->
+      <div id="screen-history" class="screen-pane">
+        <div class="app-topbar">
+          <span class="topbar-title">My Papers</span>
+          <button class="icon-btn" onclick="switchScreen('home')">✕</button>
+        </div>
+        <div class="history-list">
+          <div class="paper-card" onclick="switchScreen('editor')">
+            <div class="paper-card-icon">⚡</div>
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 600;">Physics — Electrostatics Mock</div>
+              <div style="font-size: 11px; color: #64748B;">Version 2 • Edited today</div>
+              <span class="offline-tag">✓ Offline Ready</span>
+            </div>
+            <button class="icon-btn" style="color: var(--accent-blue);" onclick="event.stopPropagation(); alert('Reverted to Version 1');">↺</button>
+          </div>
+
+          <div class="paper-card" onclick="switchScreen('editor')">
+            <div class="paper-card-icon">📐</div>
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 600;">Class 10 Mathematics Unit Test</div>
+              <div style="font-size: 11px; color: #64748B;">Version 1 • 2 days ago</div>
+              <span class="offline-tag">✓ Offline Ready</span>
+            </div>
+          </div>
+
+          <div class="paper-card" onclick="switchScreen('editor')">
+            <div class="paper-card-icon">🧪</div>
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 600;">Chemistry: Chemical Bonding</div>
+              <div style="font-size: 11px; color: #64748B;">Version 3 • Last week</div>
+              <span class="offline-tag">✓ Offline Ready</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    function switchScreen(screenId) {
+      document.querySelectorAll('.screen-pane').forEach(el => el.classList.remove('active'));
+      const target = document.getElementById('screen-' + screenId);
+      if (target) target.classList.add('active');
+
+      document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = Array.from(document.querySelectorAll('.nav-btn')).find(b => b.textContent.toLowerCase().includes(screenId));
+      if (activeBtn) activeBtn.classList.add('active');
+    }
+
+    function handleLogin() {
+      switchScreen('home');
+    }
+
+    function setQuickPrompt(text) {
+      document.getElementById('quick-prompt-input').value = text;
+    }
+
+    function startChatFromHome() {
+      const val = document.getElementById('quick-prompt-input').value;
+      if (val.trim()) {
+        const chatBox = document.getElementById('chat-box');
+        const userRow = document.createElement('div');
+        userRow.className = 'msg-row user';
+        userRow.innerHTML = `<div class="msg-bubble user">${val}</div>`;
+        chatBox.appendChild(userRow);
+
+        const aiRow = document.createElement('div');
+        aiRow.className = 'msg-row ai';
+        aiRow.innerHTML = `<div class="msg-bubble ai"><div class="msg-sender">Paperly</div>Understood. How many questions would you like for this test?</div>`;
+        chatBox.appendChild(aiRow);
+
+        document.getElementById('quick-prompt-input').value = '';
+      }
+      switchScreen('chat');
+    }
+
+    function sendChatMessage() {
+      const input = document.getElementById('chat-input');
+      const val = input.value.trim();
+      if (!val) return;
+
+      const chatBox = document.getElementById('chat-box');
+      const userRow = document.createElement('div');
+      userRow.className = 'msg-row user';
+      userRow.innerHTML = `<div class="msg-bubble user">${val}</div>`;
+      chatBox.appendChild(userRow);
+      input.value = '';
+
+      setTimeout(() => {
+        const aiRow = document.createElement('div');
+        aiRow.className = 'msg-row ai';
+        aiRow.innerHTML = `<div class="msg-bubble ai"><div class="msg-sender">Paperly</div>Understood. Updating test specification...</div>`;
+        chatBox.appendChild(aiRow);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }, 500);
+    }
+
+    function applyDocumentEdit() {
+      const input = document.getElementById('edit-instruction-input');
+      const val = input.value.trim();
+      if (!val) return;
+
+      const q2 = document.getElementById('q2-block');
+      if (q2) {
+        q2.style.background = '#FEF3C7';
+        q2.style.padding = '4px';
+        q2.style.borderRadius = '4px';
+        q2.innerHTML = `
+          <div class="q-stem">
+            <span><b>Q2. [Modified: Harder]</b> A capacitor of capacitance $C_1 = 4\mu\text{F}$ is charged to $200\text{ V}$ and connected across an uncharged capacitor $C_2 = 2\mu\text{F}$. Calculate the electrostatic energy lost in the process:</span>
+            <b>[2M]</b>
+          </div>
+          <div class="q-options-grid">
+            <div>(A) $0.027\text{ J}$</div>
+            <div>(B) $0.013\text{ J}$</div>
+            <div>(C) $0.054\text{ J}$</div>
+            <div>(D) Zero</div>
+          </div>
+        `;
+      }
+      input.value = '';
+      alert('Applied AI Edit: Replaced Q2 with a harder numerical capacitor problem! Document updated.');
+    }
+
+    let selectedFmt = 'pdf';
+    function selectExportFormat(fmt) {
+      selectedFmt = fmt;
+      document.getElementById('opt-pdf').classList.toggle('active', fmt === 'pdf');
+      document.getElementById('opt-docx').classList.toggle('active', fmt === 'docx');
+    }
+
+    function triggerDownload() {
+      document.getElementById('export-success-msg').style.display = 'block';
+      setTimeout(() => {
+        document.getElementById('export-success-msg').style.display = 'none';
+        switchScreen('editor');
+      }, 1500);
+    }
+  </script>
+</body>
+</html>

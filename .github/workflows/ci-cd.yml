@@ -1,0 +1,124 @@
+name: Paperly CI/CD & Android Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # -------------------------------------------------------------
+  # 1. Backend Testing & Verification
+  # -------------------------------------------------------------
+  backend-test:
+    name: Backend Pytest Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Test Suite
+        env:
+          DATABASE_URL: sqlite:///./test_paperly.db
+          DEBUG: "false"
+          SECRET_KEY: test_secret_key_ci_cd_paperly_32bytes!
+          GEMINI_API_KEY: dummy_key_for_testing
+        run: |
+          PYTHONPATH=backend pytest backend/tests -v
+
+  # -------------------------------------------------------------
+  # 2. Android Build & APK Packaging
+  # -------------------------------------------------------------
+  android-build:
+    name: Build Android APK
+    needs: [backend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Make Gradle Wrapper Executable
+        run: |
+          cd android
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper --gradle-version 8.6
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperly-app-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  # -------------------------------------------------------------
+  # 3. Publish Release with APK Asset
+  # -------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [android-build]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: paperly-app-debug
+          path: ./release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./release-assets/app-debug.apk
+          tag_name: ${{ github.ref_name || 'v1.0.0' }}
+          name: Paperly ${{ github.ref_name || 'v1.0.0' }} Release
+          draft: false
+          prerelease: false
+          body: |
+            ## Paperly v1.0.0 — AI-Powered Question Paper & Document Workspace
+
+            ### What's New:
+            - **Conversational Paper Creation**: Natural language specification without complicated multi-field forms.
+            - **Authoritative Grounding**: Official curriculum/syllabus alignment & source file ingestion (PDF, DOCX).
+            - **Independent STEM Verification**: Mathematical accuracy, formula checks, and distractor plausibility validation.
+            - **Document Editor with Revision Drawer**: In-place conversational modification ("Replace Q2 with a numerical").
+            - **High-Fidelity Export**: Print-ready vector PDF via ReportLab and editable Microsoft Word (.docx).
+            - **Offline-First Storage**: Local SQLite Room database caching papers and chats.
+
+            ### Assets:
+            - Download `app-debug.apk` below and sideload onto your Android smartphone or tablet.

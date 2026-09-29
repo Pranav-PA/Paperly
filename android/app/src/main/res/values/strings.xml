@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Paperly</string>
+    <string name="login_title">PAPERLY</string>
+    <string name="login_subtitle">Pedagogical Workspace for Educators</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="login_button">Sign In to Paperly</string>
+    <string name="private_deployment_notice">Managed Private Deployment v1.0</string>
+</resources>
