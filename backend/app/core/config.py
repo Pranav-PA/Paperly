@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     GEMINI_THINKING_LEVEL: str = "medium"
 
     # Performance & Concurrency on Termux
-    MAX_CONCURRENT_GENERATIONS: int = 2
+    MAX_CONCURRENT_GENERATIONS: int = 4
 
     model_config = SettingsConfigDict(
         env_file=str(BACKEND_DIR / ".env"),

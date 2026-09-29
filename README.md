@@ -97,7 +97,7 @@ After a few seconds it prints a box like:
 | Test Gemini key & model | `python scripts/manage.py check-gemini` |
 | Update Paperly | `git pull && bash scripts/install_termux.sh` |
 
-Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.8-flash`, `GEMINI_THINKING_LEVEL=medium` (use `low` for faster papers, `high` for tougher maths), `MAX_CONCURRENT_GENERATIONS=2`.
+Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.8-flash`, `GEMINI_THINKING_LEVEL=medium` (use `low` for faster papers, `high` for tougher maths), `MAX_CONCURRENT_GENERATIONS=4`.
 
 ---
 
@@ -108,7 +108,6 @@ Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.
 | App: "Can't find the server" | The tunnel URL changed. Copy the new one from Termux into *Server settings*. |
 | App: "demo mode (no Gemini key)" | Put your key in `backend/.env` (`GEMINI_API_KEY=...`), then restart the server. |
 | "Gemini rejected the API key" | Key is wrong or was deleted. Make a new one at aistudio.google.com/apikey. |
-| "rate limit or quota reached" | The free tier has per-minute limits. Wait a minute and retry. |
 | Server stops when screen is off | Set Termux battery to **Unrestricted** (step 6). |
 | Installer fails on `pydantic-core` | Your CPU has no prebuilt package; the script installs Rust and builds it (20–40 min). Keep the phone charging and run the installer again if it was interrupted. |
 
