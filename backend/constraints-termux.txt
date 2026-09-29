@@ -1,0 +1,5 @@
+# Pins that have prebuilt Android wheels on the Termux User Repository
+# (pydantic-core 2.41.5 exists for Python 3.13 and 3.14 on arm64, armv7, x86, x86_64).
+# Without this pip picks the newest pydantic-core, which must be compiled with Rust.
+pydantic==2.12.5
+pydantic-core==2.41.5
