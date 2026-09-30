@@ -17,6 +17,9 @@ interface PaperlyApi {
     @GET("api/v1/auth/me")
     suspend fun me(): UserProfile
 
+    @GET("api/v1/auth/discovery")
+    suspend fun discovery(): DiscoveryInfo
+
     @POST("api/v1/auth/change-password")
     suspend fun changePassword(@Body body: ChangePasswordRequest): Response<Unit>
 

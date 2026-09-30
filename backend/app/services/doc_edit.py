@@ -38,6 +38,30 @@ class Block:
     size: Optional[float] = None
     in_table: bool = False
     page: Optional[int] = None
+    font: Optional[str] = None
+    italic: bool = False
+    indent: Optional[float] = None
+    label_bold: bool = False
+
+
+def style_tag(b: Block) -> str:
+    """Compact formatting summary shown to the assistant, e.g. '{11pt, bold number, Arial, indent 18}'."""
+    parts = []
+    if b.size:
+        parts.append(f"{b.size:g}pt")
+    if b.bold:
+        parts.append("bold")
+    elif b.label_bold:
+        parts.append("bold number")
+    if b.italic:
+        parts.append("italic")
+    if b.font:
+        parts.append(b.font)
+    if b.indent:
+        parts.append(f"indent {b.indent:g}")
+    if b.align in ("center", "right"):
+        parts.append(b.align)
+    return "{" + ", ".join(parts) + "}" if parts else ""
 
 
 @dataclass
@@ -126,18 +150,35 @@ def _runs_text(p: Paragraph) -> str:
     return "".join(r.text for r in p.runs)
 
 
+def _effective(run, paragraph, attr: str):
+    """A run's formatting value, falling back to its paragraph style (and that style's parents)."""
+    value = getattr(run.font, attr)
+    style = paragraph.style
+    while value is None and style is not None:
+        value = getattr(style.font, attr, None)
+        style = style.base_style
+    return value
+
+
 def docx_blocks(data: bytes) -> List[Block]:
     doc = Document(io.BytesIO(data))
     blocks = []
     for bid, p, in_table in _docx_paragraphs(doc):
         text = _runs_text(p)
         runs = [r for r in p.runs if r.text.strip()]
-        sizes = [r.font.size.pt for r in runs if r.font.size]
+        sizes = [s.pt for s in (_effective(r, p, "size") for r in runs) if s]
+        fonts = [f for f in (_effective(r, p, "name") for r in runs) if f]
+        body_runs = runs[1:] if len(runs) > 1 and re.fullmatch(r"\s*(?:Q\.?\s*)?\(?\d+[a-z]?[.)]?\s*", runs[0].text, re.I) else runs
         align = {1: "center", 2: "right", 3: "justify"}.get(int(p.alignment) if p.alignment is not None else 0, "left")
+        indent = p.paragraph_format.left_indent
         blocks.append(Block(
             id=bid, text=text, in_table=in_table, align=align,
-            bold=bool(runs) and all(r.bold for r in runs),
-            size=max(sizes) if sizes else None,
+            bold=bool(body_runs) and all(bool(_effective(r, p, "bold")) for r in body_runs),
+            label_bold=body_runs is not runs and bool(_effective(runs[0], p, "bold")),
+            italic=bool(body_runs) and all(bool(_effective(r, p, "italic")) for r in body_runs),
+            size=max(sizes, key=sizes.count) if sizes else None,
+            font=max(fonts, key=fonts.count) if fonts else None,
+            indent=round(indent.pt, 1) if indent else None,
         ))
     return blocks
 
@@ -262,6 +303,17 @@ def apply_docx_ops(data: bytes, ops: list) -> EditOutcome:
                 if el.getparent() is not None:
                     el.getparent().remove(el)
             changes.append(Change(ids[0], before, ""))
+        elif kind == "match_style":
+            example = get(op.value)
+            ids = [b for b in span(op.target, op.end_target) if _runs_text(get(b)).strip()]
+            for b in ids:
+                _copy_style(example, get(b))
+            changes.append(Change(ids[0] if ids else op.target, "", f"formatting matched to {op.value}"))
+        elif kind == "set_style":
+            ids = [b for b in span(op.target, op.end_target) if _runs_text(get(b)).strip()]
+            for b in ids:
+                _set_style(get(b), op.value or "")
+            changes.append(Change(ids[0] if ids else op.target, "", f"formatting: {op.value}"))
         elif kind == "set_columns":
             n = max(1, min(3, int(op.value or 1)))
             for section in doc.sections:
@@ -297,6 +349,80 @@ def apply_docx_ops(data: bytes, ops: list) -> EditOutcome:
     buffer = io.BytesIO()
     doc.save(buffer)
     return EditOutcome(buffer.getvalue(), changes)
+
+
+_LABEL_RUN = re.compile(r"\s*(?:Q\.?\s*)?\(?\d+[a-z]?[.)]?\s*", re.I)
+_MARKS_RUN = re.compile(r"\s*[\[(]\s*\d+(?:\.\d+)?\s*(?:marks?|m)?\s*[\])]\s*", re.I)
+
+
+def _run_kind(run) -> str:
+    if _LABEL_RUN.fullmatch(run.text):
+        return "label"
+    if _MARKS_RUN.fullmatch(run.text):
+        return "marks"
+    return "body"
+
+
+def _copy_style(example: Paragraph, target: Paragraph) -> None:
+    """Make `target` look like `example`: paragraph layout (indent, spacing, alignment, style) and run formatting
+    (question numbers like the example's number, marks like its marks, text like its text). Text is unchanged."""
+    ex_ppr = example._p.pPr
+    if target._p.pPr is not None:
+        target._p.remove(target._p.pPr)
+    if ex_ppr is not None:
+        target._p.insert(0, copy.deepcopy(ex_ppr))
+    ex_runs = [r for r in example.runs if r.text.strip()]
+    by_kind = {}
+    for r in ex_runs:
+        by_kind.setdefault(_run_kind(r), r)
+    body_example = max((r for r in ex_runs if _run_kind(r) == "body"), key=lambda r: len(r.text), default=None)
+    if body_example is not None:
+        by_kind["body"] = body_example
+    for r in target.runs:
+        source = by_kind.get(_run_kind(r)) or by_kind.get("body")
+        if source is None:
+            continue
+        if r._r.rPr is not None:
+            r._r.remove(r._r.rPr)
+        if source._r.rPr is not None:
+            r._r.insert(0, copy.deepcopy(source._r.rPr))
+
+
+def _set_style(p: Paragraph, spec: str) -> None:
+    """Apply 'size=11, bold=false, italic=false, font=Arial, color=#000000, align=left, indent=18, space_after=4'."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import RGBColor
+    values = {}
+    for item in re.split(r"[,;]", spec):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            values[k.strip().lower()] = v.strip()
+    truthy = lambda v: v.lower() in ("1", "true", "yes", "on")
+    for r in p.runs:
+        if "size" in values:
+            r.font.size = Pt(float(re.sub(r"[^\d.]", "", values["size"]) or 11))
+        if "bold" in values:
+            r.bold = truthy(values["bold"])
+        if "italic" in values:
+            r.italic = truthy(values["italic"])
+        if "underline" in values:
+            r.underline = truthy(values["underline"])
+        if "font" in values:
+            family = {"serif": "Times New Roman", "sans": "Arial"}.get(values["font"].lower(), values["font"])
+            r.font.name = family
+            r._r.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), family)
+        if "color" in values and re.fullmatch(r"#?[0-9a-fA-F]{6}", values["color"]):
+            r.font.color.rgb = RGBColor.from_string(values["color"].lstrip("#").upper())
+    fmt = p.paragraph_format
+    if "align" in values:
+        fmt.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER,
+                         "right": WD_ALIGN_PARAGRAPH.RIGHT, "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}.get(values["align"].lower())
+    if "indent" in values:
+        fmt.left_indent = Pt(float(re.sub(r"[^\d.]", "", values["indent"]) or 0))
+    if "space_after" in values:
+        fmt.space_after = Pt(float(re.sub(r"[^\d.]", "", values["space_after"]) or 0))
+    if "space_before" in values:
+        fmt.space_before = Pt(float(re.sub(r"[^\d.]", "", values["space_before"]) or 0))
 
 
 def _nearby(order: List[str], bid: str, get) -> List[Paragraph]:
@@ -427,7 +553,8 @@ def pdf_blocks(data: bytes) -> List[Block]:
     if pymupdf is None:
         raise DocEditError("PDF editing isn't installed on the server (Termux: pkg install python-pymupdf).")
     with pymupdf.open(stream=data, filetype="pdf") as doc:
-        return [Block(id=l.id, text=l.text, bold=l.bold, size=round(l.size, 1), page=l.page + 1) for l in _pdf_lines(doc)]
+        return [Block(id=l.id, text=l.text, bold=l.bold, size=round(l.size, 1), page=l.page + 1,
+                      label_bold=l.label_bold, indent=None) for l in _pdf_lines(doc)]
 
 
 def pdf_page_count(data: bytes) -> int:
@@ -523,6 +650,35 @@ def _write_parts(page, rect, parts: List[str], templates: List[_PdfLine], marks_
     layout(0.6, draw=True)  # best effort: may overflow into the space below
 
 
+def _look_like(line: "_PdfLine", example: "_PdfLine") -> "_PdfLine":
+    new = copy.copy(line)
+    new.size, new.bold, new.label_bold = example.size, example.bold, example.label_bold
+    new.serif, new.color = example.serif, example.color
+    if line.size:
+        new.leading = line.leading * example.size / line.size
+    return new
+
+
+def _styled(line: "_PdfLine", spec: str) -> "_PdfLine":
+    """Copy of a PDF line's style with overrides from 'size=11, bold=false, font=serif, color=#000000'."""
+    values = {}
+    for item in re.split(r"[,;]", spec):
+        if "=" in item:
+            k, v = item.split("=", 1)
+            values[k.strip().lower()] = v.strip().lower()
+    new = copy.copy(line)
+    if "size" in values:
+        new.size = float(re.sub(r"[^\d.]", "", values["size"]) or line.size)
+    if "bold" in values:
+        new.bold = values["bold"] in ("1", "true", "yes", "on")
+        new.label_bold = new.bold or line.label_bold
+    if "font" in values:
+        new.serif = values["font"] in ("serif", "times", "times new roman")
+    if "color" in values and re.fullmatch(r"#?[0-9a-f]{6}", values["color"]):
+        new.color = int(values["color"].lstrip("#"), 16)
+    return new
+
+
 def _scratch(page):
     """A throwaway copy of the page for measuring text without drawing on the real one."""
     doc = pymupdf.open()
@@ -553,7 +709,7 @@ def apply_pdf_ops(data: bytes, ops: list) -> EditOutcome:
         # Collect edits per page so redactions happen once per page.
         pending = []
         for op in ops:
-            if op.op not in ("replace", "delete"):
+            if op.op not in ("replace", "delete", "match_style", "set_style"):
                 raise DocEditError(
                     "PDFs can only have text replaced or removed in place. For layout changes "
                     "(columns, fonts, adding questions) ask me to convert it into an editable Paperly paper."
@@ -579,24 +735,35 @@ def apply_pdf_ops(data: bytes, ops: list) -> EditOutcome:
             # Style examples: lines of the replaced range first, then the rest of the page (closest first).
             same_page = sorted((l for l in lines if l.page == chosen[0].page and l.id not in chosen_ids),
                                key=lambda l: abs(l.rect[1] - y0))
+            if op.op == "match_style" and op.value not in by_id:
+                raise DocEditError(f"Couldn't find example line {op.value} in the PDF.")
+            before = "\n".join(l.text for l in chosen)
+            for l in chosen:
+                for r in l.spans:  # each text line of the unit
+                    page.add_redact_annot(pymupdf.Rect(r[0], r[1] - 0.5, r[2], r[3] + 0.5), fill=(1, 1, 1))
+            if op.op in ("match_style", "set_style"):
+                # Restyle: same text, rewritten with the example's (or the requested) formatting.
+                # Each line keeps its own position, indent and spacing; only its look changes.
+                example = by_id.get(op.value) if op.op == "match_style" else None
+                parts = [l.text for l in chosen]
+                templates = [_look_like(l, example) if example else _styled(l, op.value or "") for l in chosen]
+                pending.append((page, box, op, (parts, templates, None), before))
+                continue
             parts = [p for p in re.split(r"\n\s*\n|\n(?=\s*(?:(?:Q\.?\s*)?\(?\d+[a-z]?[.)]|\(?[a-hA-H]\)|[a-hA-H][.)]\s))",
                                          op.text or "") if p and p.strip()]
             templates = [pick_template(t, chosen, same_page, lambda l: l.text) for t in parts]
             marks_units = [l for l in list(chosen) + same_page if _MARKS_RE.fullmatch(l.text)]
             marks_tpl = marks_units[0] if marks_units else None
-            before = "\n".join(l.text for l in chosen)
-            for l in chosen:
-                for r in l.spans:  # each text line of the unit
-                    page.add_redact_annot(pymupdf.Rect(r[0], r[1] - 0.5, r[2], r[3] + 0.5), fill=(1, 1, 1))
             pending.append((page, box, op, (parts, templates, marks_tpl), before))
 
         for page in {p for p, *_ in pending}:
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE, graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
 
         for page, box, op, (parts, templates, marks_tpl), before in pending:
-            if op.op == "replace" and parts:
+            if op.op in ("replace", "match_style", "set_style") and parts:
                 _write_parts(page, box, parts, templates, marks_tpl)
-            changes.append(Change(op.target, before, op.text if op.op == "replace" else ""))
+            after = op.text if op.op == "replace" else (before if op.op in ("match_style", "set_style") else "")
+            changes.append(Change(op.target, before if op.op != "match_style" else "", after))
 
         out = doc.tobytes(garbage=3, deflate=True)
         return EditOutcome(out, changes)

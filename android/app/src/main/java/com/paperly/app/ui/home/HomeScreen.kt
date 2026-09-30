@@ -56,9 +56,15 @@ class HomeViewModel(private val repo: PaperlyRepository, private val store: Sess
 
     val session = store.session
 
+    private var discoveryRefreshed = false
+
     fun refresh() {
         refreshing = true
         viewModelScope.launch {
+            if (!discoveryRefreshed) {
+                discoveryRefreshed = true
+                repo.refreshDiscovery()  // lets the app follow the server when its address changes
+            }
             try {
                 conversations = repo.conversations()
                 papers = repo.papers()
@@ -107,6 +113,19 @@ class HomeViewModel(private val repo: PaperlyRepository, private val store: Sess
     }
 
     fun logout() = repo.logout()
+
+    /** Returns null on success, or an error message. */
+    suspend fun saveServerUrl(url: String): String? = try {
+        repo.checkServer(url)
+        store.setServerUrl(url)
+        refresh()
+        null
+    } catch (e: PaperlyException) {
+        e.message
+    }
+
+    /** Look up the server's current address automatically. Returns the address found, or null. */
+    suspend fun findServer(): String? = if (repo.rediscover()) store.current.serverUrl else null
 }
 
 private val suggestions = listOf(
@@ -128,6 +147,7 @@ fun HomeScreen(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     var showPasswordDialog by remember { mutableStateOf(false) }
+    var showServerDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<ConversationSummary?>(null) }
 
     val session by vm.session.collectAsStateWithLifecycle()
@@ -169,6 +189,11 @@ fun HomeScreen(
                             text = { Text("Change password") },
                             leadingIcon = { Icon(Icons.Rounded.Key, null) },
                             onClick = { menuOpen = false; showPasswordDialog = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Server address") },
+                            leadingIcon = { Icon(Icons.Rounded.Dns, null) },
+                            onClick = { menuOpen = false; showServerDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text("Check for updates") },
@@ -227,6 +252,9 @@ fun HomeScreen(
 
     if (showPasswordDialog) {
         ChangePasswordDialog(vm, onDismiss = { showPasswordDialog = false })
+    }
+    if (showServerDialog) {
+        ServerDialog(vm, session.serverUrl, onDismiss = { showServerDialog = false })
     }
 }
 
@@ -465,6 +493,64 @@ private fun Stat(icon: androidx.compose.ui.graphics.vector.ImageVector, text: St
         Spacer(Modifier.width(4.dp))
         Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+@Composable
+private fun ServerDialog(vm: HomeViewModel, current: String, onDismiss: () -> Unit) {
+    var url by remember { mutableStateOf(current.trimEnd('/')) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Dns, null) },
+        title = { Text("Server address") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Paperly follows the server automatically when its address changes. Change it here only if needed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = url, onValueChange = { url = it.trim(); status = null },
+                    label = { Text("Server URL") }, singleLine = true, shape = RoundedCornerShape(14.dp)
+                )
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            val found = vm.findServer()
+                            if (found != null) url = found.trimEnd('/')
+                            status = if (found != null) "Found and switched to the current address." else
+                                "No newer address found (the current one may already be right)."
+                            busy = false
+                        }
+                    }
+                ) {
+                    Icon(Icons.Rounded.Search, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Find automatically")
+                }
+                status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && url.isNotBlank(),
+                onClick = {
+                    busy = true
+                    scope.launch {
+                        val error = vm.saveServerUrl(url)
+                        busy = false
+                        if (error == null) onDismiss() else status = error
+                    }
+                }
+            ) { Text(if (busy) "Checking…" else "Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
 }
 
 @Composable

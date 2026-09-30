@@ -79,6 +79,10 @@ def get_job(job_id: str, user_id: str) -> Optional[Job]:
     return job if job and job.user_id == user_id else None
 
 
+def running_count() -> int:
+    return sum(1 for j in _jobs.values() if j.status == "running")
+
+
 def running_job_for_conversation(conversation_id: str) -> Optional[Job]:
     for job in _jobs.values():
         if job.conversation_id == conversation_id and job.status == "running":

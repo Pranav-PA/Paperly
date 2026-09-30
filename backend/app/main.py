@@ -10,8 +10,9 @@ from app.core.config import settings
 from app.core.database import migrate
 import app.models  # Ensure all SQLAlchemy models are registered
 from app.api.v1 import api_v1_router
+from app.services import jobs
 
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 
 logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("paperly")
@@ -68,5 +69,6 @@ def health_check():
         "app": settings.APP_NAME,
         "version": APP_VERSION,
         "ai_mode": "gemini" if settings.ai_enabled else "demo",
+        "busy": jobs.running_count(),
         "model": settings.GEMINI_MODEL if settings.ai_enabled else None,
     }

@@ -18,6 +18,8 @@ data class UserProfile(
     val role: String
 )
 
+data class DiscoveryInfo(val server: String, val topic: String, val key: String)
+
 data class ChangePasswordRequest(
     @SerializedName("current_password") val currentPassword: String,
     @SerializedName("new_password") val newPassword: String

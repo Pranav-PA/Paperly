@@ -275,3 +275,49 @@ def test_second_upload_is_readable_reference_and_can_be_opened(client, auth_head
     assert client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()["kind"] == "pdf"
     chat(client, auth_headers, conv_id, "anything")
     assert seen["sources"] == [("my_paper.docx", True)]  # now the Word file is the "other" file
+
+
+def test_chat_can_sync_mismatched_font_sizes(client, auth_headers):
+    from docx.shared import Pt
+    doc = Document()
+    for n in range(1, 6):
+        p = doc.add_paragraph()
+        size = Pt(14) if n in (4, 5) else Pt(11)  # e.g. pasted questions came out bigger
+        label = p.add_run(f"{n}.")
+        label.bold, label.font.size = True, size
+        p.add_run(f" Question number {n}?").font.size = size
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    conv_id = new_chat(client, auth_headers, "Sync")
+    client.post(f"/api/v1/conversations/{conv_id}/upload",
+                files={"file": ("paper.docx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+                headers=auth_headers)
+    paper_id = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["latest_paper_id"]
+    job, reply, meta = chat(client, auth_headers, conv_id, "Make the font size of the questions match the rest")
+    assert job["status"] == "done" and meta["action"] == "paper_updated", reply
+
+    out = Document(io.BytesIO(client.get(f"/api/v1/papers/{paper_id}/export/docx", headers=auth_headers).content))
+    for n, p in enumerate(out.paragraphs, 1):
+        assert p.text == f"{n}. Question number {n}?"                    # text untouched
+        assert [r.font.size.pt for r in p.runs] == [11, 11]             # all questions 11pt now
+        assert p.runs[0].bold and not p.runs[1].bold                    # bold number kept
+
+
+def test_pdf_restyle_keeps_text_and_position():
+    from types import SimpleNamespace as Op
+    import pymupdf
+    from app.schemas.paper_schema import PaperSchema, PaperMetadata, Section, Question
+    from app.services.pdf_service import PdfGenerationService
+    from app.services.doc_edit import apply_pdf_ops, pdf_blocks
+
+    data = PdfGenerationService.generate_pdf_bytes(PaperSchema(
+        metadata=PaperMetadata(title="T", total_marks=2),
+        sections=[Section(id="s", title="A", questions=[
+            Question(id=f"q{i}", question_number=i, text=f"Question {i} here?") for i in (1, 2)])],
+    ))
+    blocks = pdf_blocks(data)
+    q2 = next(b for b in blocks if b.text.startswith("Q2."))
+    out = apply_pdf_ops(data, [Op(op="set_style", target=q2.id, end_target=None, text=None, value="size=14")]).data
+    after = next(b for b in pdf_blocks(out) if b.text.startswith("Q2."))
+    assert after.text == q2.text and after.size == 14

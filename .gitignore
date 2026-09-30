@@ -72,3 +72,5 @@ backend/tunnel.log
 android/keystore.properties
 *.jks
 *.keystore
+backend/.discovery.json
+backend/server.log

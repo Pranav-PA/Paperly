@@ -45,6 +45,21 @@ class SessionStore(context: Context) {
         _session.value = read()
     }
 
+    /** Where the server posts its current address (kept after sign-out so the login screen can use it too). */
+    data class Discovery(val server: String, val topic: String, val key: String)
+
+    val discovery: Discovery?
+        get() {
+            val server = prefs.getString(KEY_D_SERVER, null) ?: return null
+            val topic = prefs.getString(KEY_D_TOPIC, null) ?: return null
+            val key = prefs.getString(KEY_D_KEY, null) ?: return null
+            return Discovery(server, topic, key)
+        }
+
+    fun setDiscovery(d: Discovery) {
+        prefs.edit().putString(KEY_D_SERVER, d.server).putString(KEY_D_TOPIC, d.topic).putString(KEY_D_KEY, d.key).apply()
+    }
+
     fun signOut() {
         prefs.edit().remove(KEY_TOKEN).remove(KEY_NAME).apply()
         _session.value = read()
@@ -55,6 +70,9 @@ class SessionStore(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_USER = "username"
         private const val KEY_NAME = "full_name"
+        private const val KEY_D_SERVER = "discovery_server"
+        private const val KEY_D_TOPIC = "discovery_topic"
+        private const val KEY_D_KEY = "discovery_key"
 
         /** Accepts "abc.trycloudflare.com", "192.168.1.5:8000", full URLs; returns "scheme://host[:port]/". */
         fun normalizeUrl(input: String): String {

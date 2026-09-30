@@ -1,3 +1,4 @@
+import json
 import secrets
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,19 @@ def _load_or_create_secret_key() -> str:
     _SECRET_KEY_FILE.write_text(key)
     _SECRET_KEY_FILE.chmod(0o600)
     return key
+
+
+_DISCOVERY_FILE = BACKEND_DIR / ".discovery.json"
+
+
+def _load_or_create_discovery() -> dict:
+    """Random, private ntfy channel + signing key used to tell the app the tunnel's current address."""
+    if _DISCOVERY_FILE.exists():
+        return json.loads(_DISCOVERY_FILE.read_text())
+    data = {"topic": f"paperly-{secrets.token_urlsafe(18)}", "key": secrets.token_hex(32)}
+    _DISCOVERY_FILE.write_text(json.dumps(data))
+    _DISCOVERY_FILE.chmod(0o600)
+    return data
 
 
 class Settings(BaseSettings):
@@ -40,6 +54,11 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.8-flash"
     # Gemini 3.x thinking depth: low | medium | high. Chat turns always use "low".
     GEMINI_THINKING_LEVEL: str = "medium"
+
+    # Address discovery: the phone posts its (signed) tunnel URL here so apps follow URL changes automatically.
+    DISCOVERY_SERVER: str = "https://ntfy.sh"
+    DISCOVERY_TOPIC: str = ""
+    DISCOVERY_KEY: str = ""
 
     # Performance & Concurrency on Termux
     MAX_CONCURRENT_GENERATIONS: int = 4
@@ -70,4 +89,8 @@ class Settings(BaseSettings):
 settings = Settings()
 if not settings.SECRET_KEY or settings.SECRET_KEY.startswith("change_this"):
     settings.SECRET_KEY = _load_or_create_secret_key()
+if not settings.DISCOVERY_TOPIC or not settings.DISCOVERY_KEY:
+    _discovery = _load_or_create_discovery()
+    settings.DISCOVERY_TOPIC = settings.DISCOVERY_TOPIC or _discovery["topic"]
+    settings.DISCOVERY_KEY = settings.DISCOVERY_KEY or _discovery["key"]
 settings.ensure_directories()

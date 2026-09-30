@@ -54,5 +54,6 @@ def doc_context(version: Optional[PaperVersion]) -> Tuple[Optional[str], str]:
     for b in blocks:
         text = b.text.replace("\n", " / ")
         tag = " (table)" if b.in_table else ""
-        lines.append(f"[{b.id}]{tag} {text}" if text.strip() else f"[{b.id}] (blank line)")
+        look = doc_edit.style_tag(b)
+        lines.append(f"[{b.id}]{tag} {look} {text}".replace("  ", " ") if text.strip() else f"[{b.id}] (blank line)")
     return version.doc_kind, "\n".join(lines)

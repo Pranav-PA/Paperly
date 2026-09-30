@@ -10,6 +10,9 @@ import com.paperly.app.data.remote.PaperlyApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.Request
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -26,7 +29,12 @@ import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 /** Thrown with a message that is safe to show to the teacher as-is. */
-class PaperlyException(message: String, val isAuthError: Boolean = false) : Exception(message)
+class PaperlyException(
+    message: String,
+    val isAuthError: Boolean = false,
+    /** The server couldn't be reached at all (e.g. the tunnel address changed). */
+    val unreachable: Boolean = false
+) : Exception(message)
 
 class PaperlyRepository(
     private val sessionStore: SessionStore,
@@ -66,8 +74,21 @@ class PaperlyRepository(
         return cachedApi!!
     }
 
-    /** Run a call and convert every failure into a readable PaperlyException. */
-    private suspend fun <T> call(block: suspend PaperlyApi.() -> T): T = withContext(Dispatchers.IO) {
+    /**
+     * Run a call and convert every failure into a readable PaperlyException. If the server can't be reached,
+     * look up its current (signed) address, switch to it, and retry once.
+     */
+    private suspend fun <T> call(block: suspend PaperlyApi.() -> T): T {
+        val urlBefore = sessionStore.current.serverUrl
+        return try {
+            callOnce(block)
+        } catch (e: PaperlyException) {
+            // Another request may already have switched to the new address; otherwise look it up now.
+            if (e.unreachable && (sessionStore.current.serverUrl != urlBefore || rediscover())) callOnce(block) else throw e
+        }
+    }
+
+    private suspend fun <T> callOnce(block: suspend PaperlyApi.() -> T): T = withContext(Dispatchers.IO) {
         try {
             api().block()
         } catch (e: CancellationException) {
@@ -80,13 +101,14 @@ class PaperlyRepository(
                 sessionStore.signOut()
                 throw PaperlyException("Your session expired. Please sign in again.", isAuthError = true)
             }
-            throw PaperlyException(detail ?: httpMessage(e.code()), isAuthError = e.code() == 401)
+            throw PaperlyException(detail ?: httpMessage(e.code()), isAuthError = e.code() == 401,
+                unreachable = e.code() in listOf(502, 503, 504, 530) && detail == null)
         } catch (e: SocketTimeoutException) {
             throw PaperlyException("The server took too long to answer. Please try again.")
         } catch (e: UnknownHostException) {
-            throw PaperlyException("Can't find the server. Check the Server URL (it changes each time the tunnel restarts).")
+            throw PaperlyException("Can't find the server. Is Paperly running in Termux, and is this phone online?", unreachable = true)
         } catch (e: IOException) {
-            throw PaperlyException("Can't reach the server. Check your internet and that Paperly is running in Termux.")
+            throw PaperlyException("Can't reach the server. Check your internet and that Paperly is running in Termux.", unreachable = true)
         } catch (e: IllegalArgumentException) {
             throw PaperlyException("The Server URL looks invalid. Example: https://your-name.trycloudflare.com")
         } catch (e: Exception) {
@@ -118,6 +140,61 @@ class PaperlyRepository(
         else -> "Server error ($code). Please try again."
     }
 
+    // ---------- Automatic server address ----------
+    private val plainHttp = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+    private val discoveryLock = Mutex()
+    private var lastDiscoveryAttempt = 0L
+
+    /** Fetch where the server announces its address (only signed-in users get the key). */
+    suspend fun refreshDiscovery() {
+        runCatching { callOnce { discovery() } }.getOrNull()?.let {
+            sessionStore.setDiscovery(SessionStore.Discovery(it.server, it.topic, it.key))
+        }
+    }
+
+    /**
+     * Read the server's latest signed address from its notice board; switch to it if it's new and answering.
+     * Returns true when the app now points at a working, different address.
+     */
+    suspend fun rediscover(): Boolean = discoveryLock.withLock {
+        val d = sessionStore.discovery ?: return@withLock false
+        val now = System.currentTimeMillis()
+        if (now - lastDiscoveryAttempt < 5_000) return@withLock false
+        lastDiscoveryAttempt = now
+        val found = withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("${d.server.trimEnd('/')}/${d.topic}/json?poll=1&since=24h").build()
+                plainHttp.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    resp.body?.string().orEmpty().lines()
+                        .mapNotNull { line -> runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() }
+                        .filter { it.get("event")?.asString == "message" }
+                        .mapNotNull { msg -> runCatching { JsonParser.parseString(msg.get("message").asString).asJsonObject }.getOrNull() }
+                        .filter { verifySignature(d.key, it.get("url").asString, it.get("ts").asLong, it.get("sig").asString) }
+                        .maxByOrNull { it.get("ts").asLong }
+                        ?.get("url")?.asString
+                }
+            } catch (e: Exception) {
+                null
+            }
+        } ?: return@withLock false
+        val url = SessionStore.normalizeUrl(found)
+        if (url == sessionStore.current.serverUrl) return@withLock false
+        val healthy = runCatching { withContext(Dispatchers.IO) { api(url).health() } }.isSuccess
+        if (healthy) sessionStore.setServerUrl(url)
+        healthy
+    }
+
+    private fun verifySignature(key: String, url: String, ts: Long, sig: String): Boolean {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(key.toByteArray(), "HmacSHA256"))
+        val expected = mac.doFinal("$url|$ts".toByteArray()).joinToString("") { "%02x".format(it) }
+        return java.security.MessageDigest.isEqual(expected.toByteArray(), sig.lowercase().toByteArray())
+    }
+
     // ---------- Server & auth ----------
     suspend fun checkServer(url: String): HealthResponse = withContext(Dispatchers.IO) {
         val normalized = SessionStore.normalizeUrl(url)
@@ -135,6 +212,7 @@ class PaperlyRepository(
         runCatching { call { me() } }.getOrNull()?.let {
             sessionStore.signIn(token, it.username, it.fullName)
         }
+        refreshDiscovery()
     }
 
     fun logout() = sessionStore.signOut()

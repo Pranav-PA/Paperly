@@ -63,9 +63,14 @@ After a few seconds it prints a box like:
   Server URL for the app (works from anywhere):
   https://random-words-here.trycloudflare.com
 ```
-**Leave Termux open.** That's your server.
+**Leave Termux open.** That's your server. It now looks after itself:
+- **Updates install automatically.** Every 10 minutes it checks GitHub, installs updates and restarts only the server, never the tunnel, and only when no paper is being written. To turn this off, put `AUTO_UPDATE=false` in `.env`.
+- **Apps follow address changes.** Each new tunnel address is posted (signed) to a private notice board, and every app that has signed in once switches to it by itself. No re-typing and no logging in again.
+- **Crashes recover.** If the server or tunnel stops, it's restarted.
 
 ### 6. Keep it running reliably (recommended)
+- **Start automatically when the phone turns on:** install **Termux:Boot** from F-Droid, open it once, then run
+  `bash scripts/setup_autostart.sh`. Logs: `tail -f ~/paperly.log`.
 - Android **Settings → Apps → Termux → Battery → Unrestricted** (or "Don't optimize").
 - Keep the phone **plugged in**; a wake-lock is taken automatically.
 - Pull down the Termux notification and make sure it says *wake lock held*.
@@ -80,7 +85,7 @@ After a few seconds it prints a box like:
 3. Sign in with one of the accounts from `credentials.txt`. Teachers can change their password from the profile menu (top-right).
 4. **Updates install from inside the app**: when a new version is released, Paperly shows an *Update available* popup → **Update** → **Install**. (The first time, Android asks you to allow Paperly to install apps; switch it on once.) You can also check manually from the profile menu → *Check for updates*.
 
-> ℹ️ The free Cloudflare URL **changes every time you restart** `start_termux.sh`. When it changes, update it in the app under *Server settings* (you'll get a "can't find the server" message as a reminder).
+> ℹ️ The free Cloudflare URL changes when the tunnel restarts, but apps that have signed in once **switch to the new address automatically**. Only brand-new phones need the address typed once. You can also change it any time from the profile menu → *Server address*.
 
 ---
 
@@ -97,7 +102,8 @@ After a few seconds it prints a box like:
 | Reset one password | `python scripts/manage.py reset-password --username teacher03 --new-password New-Pass-99` |
 | Disable / enable a teacher | `python scripts/manage.py disable-user --username teacher05` |
 | Test Gemini key & model | `python scripts/manage.py check-gemini` |
-| Update the server | `git pull && bash scripts/install_termux.sh` |
+| Update the server | automatic (or `git pull && bash scripts/install_termux.sh`) |
+| Start on phone boot | `bash scripts/setup_autostart.sh` (needs Termux:Boot) |
 
 Settings live in `backend/.env` (edit with `nano .env`): `GEMINI_MODEL=gemini-3.8-flash`, `GEMINI_THINKING_LEVEL=medium` (use `low` for faster papers, `high` for tougher maths), `MAX_CONCURRENT_GENERATIONS=4`.
 

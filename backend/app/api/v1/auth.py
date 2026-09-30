@@ -88,6 +88,13 @@ def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@router.get("/discovery")
+def get_discovery(current_user: User = Depends(get_current_user)):
+    """Where (and with which key) the server publishes its current address, so the app can follow URL changes.
+    Only signed-in users get the key, so nobody else can point the app at a different server."""
+    return {"server": settings.DISCOVERY_SERVER, "topic": settings.DISCOVERY_TOPIC, "key": settings.DISCOVERY_KEY}
+
+
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 def change_password(
     body: ChangePasswordRequest,
