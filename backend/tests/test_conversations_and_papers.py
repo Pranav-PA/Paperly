@@ -232,3 +232,46 @@ def test_ai_failure_posts_error_message(client, auth_headers, monkeypatch):
     job, last, meta = chat(client, auth_headers, conv_id, "hi")
     assert job["status"] == "error" and "API key" in job["error"]
     assert meta["action"] == "error" and "API key" in last["content"]
+
+
+def test_second_upload_is_readable_reference_and_can_be_opened(client, auth_headers, monkeypatch):
+    """Word paper first, then a PDF: the Word paper stays open, the assistant receives the PDF to read
+    (instead of asking the teacher to paste it), and 'edit the PDF instead' switches documents."""
+    from app.schemas.paper_schema import PaperSchema, PaperMetadata, Section, Question
+    from app.services.ai_service import AIService, AgentTurn
+    from app.services.pdf_service import PdfGenerationService
+
+    conv_id = new_chat(client, auth_headers, "Two files")
+    docx_mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    client.post(f"/api/v1/conversations/{conv_id}/upload",
+                files={"file": ("my_paper.docx", _sample_docx(), docx_mime)}, headers=auth_headers)
+    pdf = PdfGenerationService.generate_pdf_bytes(PaperSchema(
+        metadata=PaperMetadata(title="Other", total_marks=5),
+        sections=[Section(id="s", title="Chapter 14", questions=[Question(id="q1", question_number=1, text="What is sound?")])],
+    ))
+    client.post(f"/api/v1/conversations/{conv_id}/upload",
+                files={"file": ("chapter14.pdf", pdf, "application/pdf")}, headers=auth_headers)
+
+    detail = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()
+    paper_id = detail["latest_paper_id"]
+    assert client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()["kind"] == "docx"
+    assert json.loads(detail["messages"][-1]["metadata_json"])["action"] == "file_received"
+
+    seen = {}
+
+    async def fake_turn(cls, history, doc_kind, doc_text, sources):
+        seen["doc_kind"], seen["sources"] = doc_kind, [(s.filename, bool(s.raw_path)) for s in sources]
+        if "instead" in history[-1]["content"]:
+            return AgentTurn(reply="Now editing chapter14.pdf.", action="open_file", source_file="chapter14.pdf")
+        return AgentTurn(reply="ok")
+
+    monkeypatch.setattr(AIService, "chat_turn", classmethod(fake_turn))
+    chat(client, auth_headers, conv_id, "Replace chapter 10 with the chapter 14 questions from the PDF")
+    assert seen["doc_kind"] == "docx"
+    assert seen["sources"] == [("chapter14.pdf", True)]  # the PDF is given to the assistant; the open Word file isn't
+
+    job, _, meta = chat(client, auth_headers, conv_id, "Edit chapter14.pdf instead")
+    assert job["status"] == "done" and meta["opened_file"] == "chapter14.pdf"
+    assert client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()["kind"] == "pdf"
+    chat(client, auth_headers, conv_id, "anything")
+    assert seen["sources"] == [("my_paper.docx", True)]  # now the Word file is the "other" file

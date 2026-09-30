@@ -70,8 +70,18 @@ def _raw_path(file_id: str, filename: str) -> Path:
     return Path(settings.UPLOAD_DIR) / f"{file_id}{Path(filename).suffix.lower()}"
 
 
-def _sources(conv_id: str, db: Session) -> List[SourceDoc]:
+def _open_filename(conv: Conversation) -> Optional[str]:
+    """Filename of the upload currently open as the chat's document (None if it's a Paperly-made paper)."""
+    for m in reversed(conv.messages):
+        meta = json.loads(m.metadata_json) if m.metadata_json else {}
+        if meta.get("action") in ("paper_ready", "paper_updated"):
+            return meta.get("opened_file")  # None when a generated/converted paper replaced the upload
+    return None
+
+
+def _sources(conv_id: str, db: Session, exclude: Optional[str] = None) -> List[SourceDoc]:
     files = db.query(UploadedFile).filter(UploadedFile.conversation_id == conv_id).order_by(UploadedFile.created_at).all()
+    files = [f for f in files if f.filename != exclude]
     sources, used = [], 0
     for f in reversed(files):  # newest first within the budget
         text = f.extracted_text or ""
@@ -143,7 +153,9 @@ def _start_turn(conv: Conversation, user: User):
         try:
             conv_row = db.get(Conversation, conv_id)
             history = [{"role": m.role, "content": m.content} for m in conv_row.messages]
-            sources = _sources(conv_id, db)
+            opened = _open_filename(conv_row)
+            sources = _sources(conv_id, db, exclude=opened)  # the open document is shown separately
+            uploads = {f.filename: f.id for f in conv_row.uploaded_files}
             version = _current_version(conv_id, db)
             doc_kind, doc_text = documents.doc_context(version)
         finally:
@@ -194,6 +206,14 @@ def _start_turn(conv: Conversation, user: User):
             else:
                 schema, summary = await AIService.import_document(target, turn.instruction)
                 new = (summary, schema, "paperly", None, None, [])
+        elif turn.action == "open_file" and turn.source_file in uploads:
+            filename = turn.source_file
+            kind = {".docx": "docx", ".pdf": "pdf"}.get(Path(filename).suffix.lower())
+            raw = _raw_path(uploads[filename], filename)
+            if kind is None or not raw.exists() or (kind == "pdf" and not doc_edit.pdf_supported()):
+                turn.action = "reply"
+            else:
+                new = (f"Opened {filename}", None, kind, raw.read_bytes(), documents.title_from_filename(filename), [])
         elif turn.action != "reply":
             turn.action = "reply"  # nothing to act on
 
@@ -209,13 +229,17 @@ def _start_turn(conv: Conversation, user: User):
                 summary, schema, kind, data, title, changes = new
                 paper, v = _save_version(conv_row, db, summary, schema=schema, doc_kind=kind, data=data, title=title)
                 updated = turn.action in ("edit_document", "edit_paperly")
-                text = turn.reply if turn.action == "edit_document" else (
+                # Remember which upload is open so the assistant doesn't also see it as "another file".
+                keep_open = {"opened_file": opened} if (turn.action == "edit_document" and opened) else {}
+                if turn.action == "open_file":
+                    keep_open = {"opened_file": turn.source_file}
+                text = turn.reply if turn.action in ("edit_document", "open_file") else (
                     f"{turn.reply}\n\n{summary}" if updated else
                     f"{turn.reply}\n\n'{schema.metadata.title}' is ready: {_describe(schema)}."
                 )
                 _post(db, conv_id, text, {
                     "action": "paper_updated" if updated else "paper_ready",
-                    "paper_id": paper.id, "version": v.version_number, "changes": changes,
+                    "paper_id": paper.id, "version": v.version_number, "changes": changes, **keep_open,
                 })
                 result.update(paper_id=paper.id, version=v.version_number)
             conv_row.updated_at = datetime.now(timezone.utc)
@@ -386,9 +410,10 @@ async def upload_source_material(
             raise HTTPException(status_code=422, detail="Reading photos needs the Gemini key on the server.")
         if not suffix:
             filename += ".jpg"
-        _raw_path(file_id, filename).write_bytes(content)
     elif char_count == 0 and doc_kind != "pdf":
         raise HTTPException(status_code=422, detail="No readable text found in this file.")
+    # Keep every original: PDFs/photos are sent to Gemini as-is, and a Word/PDF can be opened later.
+    _raw_path(file_id, filename).write_bytes(content)
 
     db.add(UploadedFile(
         id=file_id, conversation_id=conv.id, filename=filename, mime_type=mime_type,
@@ -398,7 +423,15 @@ async def upload_source_material(
     if doc_kind == "pdf" and not doc_edit.pdf_supported():
         doc_kind = None  # server can't edit PDFs in place; keep it as reference material
 
-    if doc_kind:
+    open_paper = _latest_paper(conv.id, db)
+    if doc_kind and open_paper is not None:
+        # A document is already open: the new file is something to read from, not a replacement.
+        _post(db, conv.id,
+              f"Got '{filename}'. I'll keep editing '{open_paper.title}' and can read '{filename}' myself, e.g. "
+              f"\"replace chapter 10 with the chapter 14 questions from {filename}\". "
+              f"Say \"edit {filename} instead\" if you want to work on that file.",
+              {"action": "file_received", "filename": filename})
+    elif doc_kind:
         title = documents.title_from_filename(filename)
         paper, version = _save_version(conv, db, f"Uploaded {filename}", doc_kind=doc_kind, data=content, title=title)
         pages = doc_edit.pdf_page_count(content) if doc_kind == "pdf" else None
@@ -406,7 +439,8 @@ async def upload_source_material(
               f"Opened '{filename}'" + (f" ({pages} page{'s' if pages != 1 else ''})" if pages else "") +
               ". I'll edit this exact document and keep its formatting. Ask me anything about it, or tell me "
               "what to change.",
-              {"action": "paper_ready", "paper_id": paper.id, "version": version.version_number})
+              {"action": "paper_ready", "paper_id": paper.id, "version": version.version_number,
+               "opened_file": filename})
     else:
         _post(db, conv.id,
               f"Got '{filename}'. " + (

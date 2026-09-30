@@ -65,6 +65,32 @@ def _label_split(text: str) -> Tuple[str, str]:
     return "", text
 
 
+def text_role(text: str) -> str:
+    """Rough role of a line so new text copies the look of the same kind of line: question/option/heading/body."""
+    t = text.strip()
+    if re.match(r"^(?:Q\.?\s*)?\(?\d+[a-z]?[.)]", t, re.I):
+        return "question"
+    if re.match(r"^(?:\(?[a-hA-H]\)|[a-hA-H][.)]\s|\((?:i|ii|iii|iv|v|vi)\))", t):
+        return "option"
+    if len(t) <= 70 and ((t.isupper() and " " in t and sum(c.isalpha() for c in t) >= 5)
+                         or re.match(r"^(chapter|section|unit|part|lesson)\b", t, re.I)):
+        return "heading"
+    return "body"
+
+
+def pick_template(text: str, primary: list, fallback: list, text_of):
+    """The first item with the same role as `text` (range first, then the rest of the document);
+    otherwise the most text-heavy item of the range (the typical body style, not a heading)."""
+    role = text_role(text)
+    for pool in (primary, fallback):
+        for item in pool:
+            if text_of(item).strip() and text_role(text_of(item)) == role:
+                return item
+    body = [i for i in primary if text_of(i).strip() and text_role(text_of(i)) != "heading"] or \
+           [i for i in fallback if text_of(i).strip() and text_role(text_of(i)) != "heading"] or primary or fallback
+    return max(body, key=lambda i: len(text_of(i)))
+
+
 # =====================================================================
 # Word (.docx)
 # =====================================================================
@@ -199,31 +225,30 @@ def apply_docx_ops(data: bytes, ops: list) -> EditOutcome:
         kind = op.op
         if kind == "replace":
             ids = span(op.target, op.end_target)
-            first = get(ids[0])
-            before = "\n".join(_runs_text(get(b)) for b in ids)
-            parts = (op.text or "").split("\n\n")
-            _replace_runs_text(first, parts[0])
-            for extra in ids[1:]:
-                el = get(extra)._p
-                el.getparent().remove(el)
-            anchor = first
-            for part in parts[1:]:
-                new_p = copy.deepcopy(first._p)
-                anchor._p.addnext(new_p)
-                anchor = Paragraph(new_p, first._parent)
-                _set_text_like(anchor, part)
+            originals = [get(b) for b in ids]
+            before = "\n".join(_runs_text(p) for p in originals)
+            parts = [p for p in (op.text or "").split("\n\n") if p.strip()] or [""]
+            if len(ids) == 1 and len(parts) == 1:
+                # Same paragraph: rewrite only the characters that differ, keeping every run's formatting.
+                _replace_runs_text(originals[0], parts[0])
+            else:
+                # Each new paragraph copies the look of the same kind of line (question/option/heading) instead of
+                # blindly copying the first paragraph of the range (often a bigger, bold chapter heading).
+                nearby = _nearby(order, ids[0], get)
+                templates = [copy.deepcopy(pick_template(t, originals, nearby, _runs_text)._p) for t in parts]
+                first_el = originals[0]._p
+                for tpl_el, part in zip(templates, parts):
+                    first_el.addprevious(tpl_el)
+                    _set_text_like(Paragraph(tpl_el, originals[0]._parent), part)
+                for p in originals:
+                    if p._p.getparent() is not None:
+                        p._p.getparent().remove(p._p)
             changes.append(Change(ids[0], before, op.text or ""))
         elif kind == "insert_after":
             anchor = get(op.target)
-            template = anchor
-            # When inserting after a blank line, copy the nearest paragraph with text as the style template.
-            if not _runs_text(anchor).strip():
-                pos = order.index(op.target)
-                for bid in reversed(order[:pos]):
-                    if _runs_text(get(bid)).strip():
-                        template = get(bid)
-                        break
-            for part in (op.text or "").split("\n\n"):
+            nearby = _nearby(order, op.target, get)
+            for part in [p for p in (op.text or "").split("\n\n") if p.strip()]:
+                template = pick_template(part, [], nearby, _runs_text)
                 new_p = copy.deepcopy(template._p)
                 anchor._p.addnext(new_p)
                 anchor = Paragraph(new_p, template._parent)
@@ -274,6 +299,16 @@ def apply_docx_ops(data: bytes, ops: list) -> EditOutcome:
     return EditOutcome(buffer.getvalue(), changes)
 
 
+def _nearby(order: List[str], bid: str, get) -> List[Paragraph]:
+    """Body paragraphs ordered by distance from `bid` (closest first): the best style examples for new text."""
+    body = [b for b in order if b.startswith("B")]
+    if bid not in body:
+        return [get(b) for b in body]
+    i = body.index(bid)
+    ranked = sorted(range(len(body)), key=lambda j: (abs(j - i), j > i))
+    return [get(body[j]) for j in ranked]
+
+
 def _parse_font(value: Optional[str]) -> Tuple[Optional[str], Optional[float]]:
     """'Times New Roman, 12' / 'serif' / '12' -> (family, size)."""
     if not value:
@@ -302,6 +337,37 @@ class _PdfLine:
     serif: bool
     color: int
     spans: list
+    label_bold: bool = False  # is the question number / option label ("Q10.", "(a)") set in bold?
+    space_above: float = 0.0  # vertical gap to the previous unit on the page
+    pitch_above: float = 0.0  # top-to-top distance from the unit above (the page's rhythm)
+    leading: float = 0.0      # line pitch inside the unit when it wraps
+
+
+def _line_text(line) -> str:
+    return "".join(sp["text"] for sp in line["spans"]).strip()
+
+
+def _group_lines(lines) -> list:
+    """Split a text block into editable units: a new unit starts at a question number, option label or heading,
+    at anything sitting beside the previous line (e.g. right-aligned marks), or after a clear vertical gap.
+    Wrapped continuation lines stay with their question."""
+    groups = []
+    for line in lines:
+        text = _line_text(line)
+        size = max((sp["size"] for sp in line["spans"]), default=10)
+        prev = groups[-1][-1] if groups else None
+        starts_new = (
+            prev is None
+            or text_role(text) in ("question", "option", "heading")
+            or line["bbox"][0] > prev["bbox"][2] + size * 0.5            # beside the previous line
+            or line["bbox"][1] - prev["bbox"][3] > size * 0.8             # clear gap
+            or len(groups[-1]) >= 8                                       # badly structured PDFs
+        )
+        if starts_new:
+            groups.append([line])
+        else:
+            groups[-1].append(line)
+    return groups
 
 
 def _pdf_lines(doc) -> List[_PdfLine]:
@@ -316,7 +382,7 @@ def _pdf_lines(doc) -> List[_PdfLine]:
             lines = [l for l in block["lines"] if any(s["text"].strip() for s in l["spans"])]
             if not lines:
                 continue
-            groups = [lines] if len(lines) <= 6 else [[l] for l in lines]
+            groups = _group_lines(lines)
             for group in groups:
                 n += 1
                 spans = [s for l in group for s in l["spans"] if s["text"].strip()]
@@ -334,12 +400,26 @@ def _pdf_lines(doc) -> List[_PdfLine]:
                 y0 = min(l["bbox"][1] for l in group)
                 x1 = max(l["bbox"][2] for l in group)
                 y1 = max(l["bbox"][3] for l in group)
+                first_span = next(s for l in group for s in l["spans"] if s["text"].strip())
+                joined = " ".join(parts)
                 units.append(_PdfLine(
-                    id=f"p{pno + 1}.{n}", page=pno, rect=(x0, y0, x1, y1), text=" ".join(parts),
+                    id=f"p{pno + 1}.{n}", page=pno, rect=(x0, y0, x1, y1), text=joined,
+                    label_bold=text_role(joined) in ("question", "option") and (
+                        bool(first_span["flags"] & 16) or "bold" in first_span["font"].lower()),
                     size=main["size"], bold=bool(main["flags"] & 16) or "bold" in main["font"].lower(),
                     serif=bool(main["flags"] & 4) or any(k in main["font"].lower() for k in ("times", "serif", "roman")),
                     color=main["color"], spans=[l["bbox"] for l in group],
                 ))
+    # Spacing to the closest unit above it that overlaps horizontally, and line pitch inside wrapped units.
+    for u in units:
+        above = [o for o in units if o.page == u.page and o is not u and o.rect[3] <= u.rect[1] + 0.5
+                 and o.rect[0] < u.rect[2] and o.rect[2] > u.rect[0]]
+        if above:
+            nearest = max(above, key=lambda o: o.rect[3])
+            u.space_above = max(0.0, u.rect[1] - nearest.rect[3])
+            u.pitch_above = u.rect[1] - nearest.rect[1]
+        tops = [r[1] for r in u.spans]
+        u.leading = (tops[-1] - tops[0]) / (len(tops) - 1) if len(tops) > 1 else u.size * 1.25
     return units
 
 
@@ -375,16 +455,78 @@ def _css_font(serif: bool) -> str:
     return "serif" if serif else "sans-serif"
 
 
-def _write_html(page, rect, text: str, line: _PdfLine) -> None:
+_MARKS_RE = re.compile(r"\s*[\[(]\s*\d+(?:\.\d+)?\s*(?:marks?|m)?\s*[\])]\s*$", re.I)
+_OPTION_LABEL_RE = re.compile(r"^\s*(\(?[a-hA-H]\)|[a-hA-H][.)]|\((?:i|ii|iii|iv|v|vi)\))(\s.*)$", re.S)
+
+
+def _para_html(text: str, tpl: _PdfLine, scale: float, align: str = "left") -> str:
     label, rest = _label_split(text)
+    if not label:
+        m = _OPTION_LABEL_RE.match(text)
+        if m:
+            label, rest = m.group(1), m.group(2)
     body = html.escape(rest if label else text).replace("\n", "<br>")
-    content = (f"<b>{html.escape(label)}</b>{body}" if label else body)
-    if line.bold and not label:
+    content = ((f"<b>{html.escape(label)}</b>" if tpl.label_bold or tpl.bold else html.escape(label)) + body) if label else body
+    if tpl.bold:
         content = f"<b>{content}</b>"
-    r, g, b = (line.color >> 16) & 255, (line.color >> 8) & 255, line.color & 255
-    css = (f"* {{font-family: {_css_font(line.serif)}; font-size: {line.size:.1f}px; "
-           f"color: rgb({r},{g},{b}); line-height: 1.15; margin: 0; padding: 0;}}")
-    page.insert_htmlbox(pymupdf.Rect(rect), content, css=css, scale_low=0.6)
+    r, g, b = (tpl.color >> 16) & 255, (tpl.color >> 8) & 255, tpl.color & 255
+    line_height = min(2.0, max(1.0, tpl.leading / tpl.size)) if tpl.size else 1.25
+    return (f'<p style="font-family: {_css_font(tpl.serif)}; font-size: {tpl.size * scale:.2f}px; '
+            f'color: rgb({r},{g},{b}); text-align: {align}; line-height: {line_height:.3f}; margin: 0;">{content}</p>')
+
+
+def _write_parts(page, rect, parts: List[str], templates: List[_PdfLine], marks_tpl: Optional[_PdfLine]) -> None:
+    """Write each paragraph styled like its template line, placed with the page's own rhythm: each starts as far
+    below the previous one as the matching original line did (top-to-top), wrapped lines use the original line
+    pitch. A trailing marks token goes right-aligned like the paper's own marks. Everything shrinks evenly
+    (down to 60%) only if the new text doesn't fit the available space."""
+    x0, y0, x1, y_max = rect
+    scratch = _scratch(page)
+
+    def lines_used(text: str, tpl: _PdfLine, left: float, right: float, scale: float) -> Tuple[int, float]:
+        html_one = _para_html("X", tpl, scale)
+        spare1, _ = scratch.insert_htmlbox(pymupdf.Rect(left, 0, right, 5000), html_one, scale_low=1)
+        spare, _ = scratch.insert_htmlbox(pymupdf.Rect(left, 0, right, 5000), _para_html(text, tpl, scale), scale_low=1)
+        one = 5000 - spare1
+        used = 5000 - spare
+        pitch = (tpl.leading or tpl.size * 1.25) * scale
+        return max(1, 1 + round((used - one) / pitch)), used
+
+    def layout(scale: float, draw: bool) -> bool:
+        y = y0
+        prev_lines, prev_tpl = 1, None
+        for i, (text, tpl) in enumerate(zip(parts, templates)):
+            if i:
+                pitch = tpl.pitch_above if tpl.pitch_above > 0 else (prev_tpl.leading + tpl.size * 0.3)
+                y += pitch * scale + (prev_lines - 1) * (prev_tpl.leading or prev_tpl.size * 1.25) * scale
+            left = x0 + max(0.0, tpl.rect[0] - x0)
+            right = x1
+            marks = _MARKS_RE.search(text) if marks_tpl is not None else None
+            if marks:
+                text = text[:marks.start()].rstrip()
+                right = marks_tpl.rect[0] - 4
+            n, used = lines_used(text, tpl, left, right, scale)
+            if y + used > y_max + 1:
+                return False
+            if draw:
+                page.insert_htmlbox(pymupdf.Rect(left, y, right, y + used + 2), _para_html(text, tpl, scale), scale_low=1)
+                if marks:
+                    page.insert_htmlbox(pymupdf.Rect(marks_tpl.rect[0] - 20, y, max(x1, marks_tpl.rect[2]) + 2, y + used + 2),
+                                        _para_html(marks.group(0).strip(), marks_tpl, scale, align="right"), scale_low=1)
+            prev_lines, prev_tpl = n, tpl
+        return True
+
+    for scale in (1.0, 0.95, 0.9, 0.85, 0.8, 0.73, 0.67, 0.6):
+        if layout(scale, draw=False):
+            layout(scale, draw=True)
+            return
+    layout(0.6, draw=True)  # best effort: may overflow into the space below
+
+
+def _scratch(page):
+    """A throwaway copy of the page for measuring text without drawing on the real one."""
+    doc = pymupdf.open()
+    return doc.new_page(width=page.rect.width, height=page.rect.height)
 
 
 def apply_pdf_ops(data: bytes, ops: list) -> EditOutcome:
@@ -434,19 +576,27 @@ def apply_pdf_ops(data: bytes, ops: list) -> EditOutcome:
             page_bottom = page.rect.height - 20
             bottom = min(below + [page_bottom]) - 1
             box = (x0, y0 - 0.5, max(x1, right_edge), max(y1 + 1, bottom))
+            # Style examples: lines of the replaced range first, then the rest of the page (closest first).
+            same_page = sorted((l for l in lines if l.page == chosen[0].page and l.id not in chosen_ids),
+                               key=lambda l: abs(l.rect[1] - y0))
+            parts = [p for p in re.split(r"\n\s*\n|\n(?=\s*(?:(?:Q\.?\s*)?\(?\d+[a-z]?[.)]|\(?[a-hA-H]\)|[a-hA-H][.)]\s))",
+                                         op.text or "") if p and p.strip()]
+            templates = [pick_template(t, chosen, same_page, lambda l: l.text) for t in parts]
+            marks_units = [l for l in list(chosen) + same_page if _MARKS_RE.fullmatch(l.text)]
+            marks_tpl = marks_units[0] if marks_units else None
             before = "\n".join(l.text for l in chosen)
             for l in chosen:
                 for r in l.spans:  # each text line of the unit
                     page.add_redact_annot(pymupdf.Rect(r[0], r[1] - 0.5, r[2], r[3] + 0.5), fill=(1, 1, 1))
-            pending.append((page, box, op, chosen[0], before))
+            pending.append((page, box, op, (parts, templates, marks_tpl), before))
 
         for page in {p for p, *_ in pending}:
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE, graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
 
-        for page, box, op, first, before in pending:
-            if op.op == "replace" and (op.text or "").strip():
-                _write_html(page, box, op.text, first)
-            changes.append(Change(first.id, before, op.text if op.op == "replace" else ""))
+        for page, box, op, (parts, templates, marks_tpl), before in pending:
+            if op.op == "replace" and parts:
+                _write_parts(page, box, parts, templates, marks_tpl)
+            changes.append(Change(op.target, before, op.text if op.op == "replace" else ""))
 
         out = doc.tobytes(garbage=3, deflate=True)
         return EditOutcome(out, changes)

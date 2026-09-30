@@ -11,7 +11,7 @@ from app.core.database import migrate
 import app.models  # Ensure all SQLAlchemy models are registered
 from app.api.v1 import api_v1_router
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.1"
 
 logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("paperly")

@@ -164,6 +164,14 @@ ACTIONS
 - "generate": write a brand-new paper. Only when the teacher wants a new paper; if subject, class and marks (or
   number of questions) are unknown, use "reply" to ask ONE short question first.
 - "convert": rebuild the uploaded WORD/PDF (or a photo in the uploads list, via source_file) as a PAPERLY paper.
+- "open_file": make another uploaded Word/PDF file (source_file = its exact name) the document being edited. Only when
+  the teacher asks to work on that file instead.
+
+OTHER FILES
+The teacher may have uploaded other files (another paper, notes, a syllabus, photos). Their full content is given to
+you: READ THEM YOURSELF, never ask the teacher to paste their content. When copying questions from another file into
+the document, rewrite them in THE DOCUMENT's format: its numbering style (continue its numbering sequence), its marks
+notation, its option labels and layout, its capitalisation. Otherwise copy the questions' wording faithfully.
 
 OPERATIONS (edit_document)
 - {"op": "replace", "target": ID, "end_target": ID or null, "text": new text}  ("\\n\\n" in Word text = new paragraph)
@@ -188,7 +196,7 @@ class DocOp(BaseModel):
 
 class AgentTurn(BaseModel):
     reply: str
-    action: Literal["reply", "edit_document", "edit_paperly", "generate", "convert"] = "reply"
+    action: Literal["reply", "edit_document", "edit_paperly", "generate", "convert", "open_file"] = "reply"
     operations: List[DocOp] = Field(default_factory=list)
     instruction: str = ""
     source_file: Optional[str] = None
@@ -241,7 +249,9 @@ class AIService:
         parts, text_only, used = [], [], 0
         for src in reversed(sources):  # newest first get the inline budget
             path = Path(src.raw_path) if src.raw_path else None
-            if path and path.exists() and used + path.stat().st_size <= _MAX_INLINE_BYTES:
+            # Gemini reads PDFs and images directly; Word files are sent as their extracted text.
+            readable = src.mime_type == "application/pdf" or src.mime_type.startswith("image/")
+            if readable and path and path.exists() and used + path.stat().st_size <= _MAX_INLINE_BYTES:
                 data = path.read_bytes()
                 used += len(data)
                 parts.insert(0, types.Part.from_text(text=f'[Attached file: "{src.filename}"]'))
@@ -500,6 +510,8 @@ class AIService:
         if not cls._get_client():
             return cls._mock_turn(history, doc_kind, doc_text, sources)
 
+        # Other uploads: PDFs/photos are attached as the original files, everything else as extracted text.
+        parts, text_sources = cls._file_parts(sources)
         files = "\n".join(f'- "{s.filename}" ({s.mime_type})' for s in sources) or "(none)"
         transcript = "\n".join(
             f"{'TEACHER' if m['role'] == 'user' else 'PAPERLY'}: {m['content']}" for m in history[-30:]
@@ -508,13 +520,14 @@ class AIService:
             f"Today's date: {date.today():%d %b %Y}\n\n"
             f"DOCUMENT KIND: {(doc_kind or 'none').upper()}\n"
             f"<document>\n{doc_text or '(no document yet)'}\n</document>\n\n"
-            f"Other uploaded files: \n{files}\n\n"
+            f"Other uploaded files (their full content is attached or included below):\n{files}\n\n"
+            f"{cls._sources_block(text_sources)}"
             f"Conversation:\n{transcript}\n\n"
             "Respond to the teacher's LAST message."
         )
         return await cls._generate_json(
             SYSTEM_PROMPT_ASSISTANT, prompt, AgentTurn,
-            thinking_level=settings.GEMINI_THINKING_LEVEL, temperature=0.2,
+            thinking_level=settings.GEMINI_THINKING_LEVEL, temperature=0.2, files=parts,
         )
 
     # -------------------------------------------------------------
