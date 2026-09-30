@@ -1,9 +1,14 @@
 import json
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db, SessionLocal
 from app.core.security import get_current_user
 from app.models.user import User
@@ -14,7 +19,7 @@ from app.schemas.paper_schema import (
     PaperEditRequest,
     PaperEditResponse,
 )
-from app.services import jobs
+from app.services import doc_edit, documents, jobs
 from app.services.ai_service import AIService
 from app.services.docx_service import DocxGenerationService
 from app.services.pdf_service import PdfGenerationService
@@ -68,6 +73,7 @@ def list_papers(
         result.append({
             "id": paper.id,
             "conversation_id": paper.conversation_id,
+            "kind": version.doc_kind,
             "title": paper.title,
             "subject": schema.metadata.subject,
             "class_grade": schema.metadata.class_grade,
@@ -79,16 +85,54 @@ def list_papers(
     return result
 
 
-@router.get("/{id}", response_model=PaperSchema)
+@router.get("/{id}")
 def get_paper(
     id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Retrieve the current active PaperSchema AST for the document editor."""
-    _, active_version = _get_user_paper_and_active_version(id, current_user.id, db)
-    schema_dict = json.loads(active_version.schema_json)
-    return PaperSchema.model_validate(schema_dict)
+    """
+    The current version. Always includes the PaperSchema fields (metadata/sections/layout) plus:
+    kind ("paperly" | "docx" | "pdf"), conversation_id, version_number, page_count (pdf) and blocks (docx text preview).
+    """
+    paper, version = _get_user_paper_and_active_version(id, current_user.id, db)
+    body = PaperSchema.model_validate_json(version.schema_json).model_dump(mode="json")
+    body.update(kind=version.doc_kind, conversation_id=paper.conversation_id,
+                version_number=version.version_number, page_count=None, blocks=None)
+    if version.doc_kind in ("docx", "pdf"):
+        try:
+            data = documents.read_file(version)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=410, detail=str(e))
+        if version.doc_kind == "pdf":
+            body["page_count"] = doc_edit.pdf_page_count(data)
+        else:
+            body["blocks"] = [
+                {"id": b.id, "text": b.text, "bold": b.bold, "align": b.align, "size": b.size, "in_table": b.in_table}
+                for b in doc_edit.docx_blocks(data)
+            ]
+    return body
+
+
+@router.get("/{id}/pages/{page}")
+def get_pdf_page(
+    id: str,
+    page: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """PNG preview of one page of a PDF document (current version). Cached per version on disk."""
+    _, version = _get_user_paper_and_active_version(id, current_user.id, db)
+    if version.doc_kind != "pdf":
+        raise HTTPException(status_code=400, detail="Page previews are only for PDF documents.")
+    cache = Path(settings.DOCS_DIR) / f"{version.id}.p{page}.png"
+    if not cache.exists():
+        try:
+            cache.write_bytes(doc_edit.render_pdf_page(documents.read_file(version), page))
+        except (doc_edit.DocEditError, FileNotFoundError) as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    return Response(content=cache.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.post("/{id}/edit", status_code=status.HTTP_202_ACCEPTED)
@@ -103,13 +147,15 @@ async def edit_paper_conversational(
     Returns {"job_id"}; poll GET /api/v1/jobs/{job_id}. The finished job's result is a PaperEditResponse.
     """
     paper, active_version = _get_user_paper_and_active_version(id, current_user.id, db)
+    if active_version.doc_kind != "paperly":
+        raise HTTPException(status_code=400, detail="Edit uploaded Word/PDF documents through the chat.")
     if jobs.running_job_for_conversation(paper.conversation_id):
         raise HTTPException(status_code=409, detail="Another change is still in progress. Please wait a moment.")
 
     current_schema = PaperSchema.model_validate_json(active_version.schema_json)
     paper_id, conv_id, instruction = paper.id, paper.conversation_id, edit_req.instruction
 
-    async def work():
+    async def work(_job):
         updated_schema, change_summary = await AIService.edit_paper(current_schema=current_schema, instruction=instruction)
         job_db = SessionLocal()
         try:
@@ -154,12 +200,15 @@ def export_paper(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Export the question paper as a formatted DOCX or PDF file."""
+    """Export the paper as DOCX or PDF. Uploaded Word/PDF documents are returned as the edited original file."""
     paper, active_version = _get_user_paper_and_active_version(id, current_user.id, db)
     schema = PaperSchema.model_validate_json(active_version.schema_json)
 
     clean_title = "".join(c for c in paper.title if c.isalnum() or c in (" ", "-", "_")).strip()
     filename_base = clean_title.replace(" ", "_") or "Question_Paper"
+
+    if active_version.doc_kind != "paperly":
+        return _export_original(active_version, format.lower(), filename_base)
 
     if format.lower() == "docx":
         docx_bytes = DocxGenerationService.generate_question_paper_docx(schema, include_solutions=include_answers)
@@ -179,6 +228,30 @@ def export_paper(
         raise HTTPException(status_code=400, detail="Unsupported export format. Choose 'pdf' or 'docx'.")
 
 
+def _export_original(version: PaperVersion, fmt: str, filename_base: str) -> Response:
+    kind = version.doc_kind
+    try:
+        data = documents.read_file(version)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=410, detail=str(e))
+    if fmt == kind:
+        return Response(content=data, media_type=documents.MIME[kind],
+                        headers={"Content-Disposition": f'attachment; filename="{filename_base}{documents.EXTENSIONS[kind]}"'})
+    if kind == "docx" and fmt == "pdf" and shutil.which("soffice"):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "document.docx"
+            src.write_bytes(data)
+            subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", tmp, str(src)],
+                           capture_output=True, timeout=120)
+            out = Path(tmp) / "document.pdf"
+            if out.exists():
+                return Response(content=out.read_bytes(), media_type="application/pdf",
+                                headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'})
+    names = {"docx": "Word (DOCX)", "pdf": "PDF"}
+    raise HTTPException(status_code=400, detail=f"This document is a {names[kind]} file, so it's exported as "
+                                                f"{names[kind]} to keep its exact formatting.")
+
+
 @router.get("/{id}/solutions/{format}")
 def export_solutions(
     id: str,
@@ -188,6 +261,9 @@ def export_solutions(
 ):
     """Export the Answer Key and Detailed Solutions as a separate document."""
     paper, active_version = _get_user_paper_and_active_version(id, current_user.id, db)
+    if active_version.doc_kind != "paperly":
+        raise HTTPException(status_code=400, detail="Ask in the chat for an answer key; separate answer-key "
+                                                    "export is for papers created in Paperly.")
     schema = PaperSchema.model_validate_json(active_version.schema_json)
 
     clean_title = "".join(c for c in paper.title if c.isalnum() or c in (" ", "-", "_")).strip()

@@ -27,12 +27,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.paperly.app.data.PaperlyException
 import com.paperly.app.data.PaperlyRepository
+import com.paperly.app.data.model.ChangeDto
 import com.paperly.app.data.model.Message
 import com.paperly.app.ui.components.BrandMark
 import com.paperly.app.ui.components.ErrorBanner
@@ -59,8 +61,8 @@ class ChatViewModel(
         private set
     var generating by mutableStateOf(false)
         private set
-    /** What the running background job does: generate | import | edit. */
-    var jobKind by mutableStateOf("generate")
+    /** What the running background job is doing: thinking | edit | generate | convert. */
+    var jobKind by mutableStateOf("thinking")
         private set
     var uploading by mutableStateOf(false)
         private set
@@ -83,7 +85,7 @@ class ChatViewModel(
             messages = detail.messages
             latestPaperId = detail.latestPaperId
             if (detail.activeJobId != null && !generating) {
-                viewModelScope.launch { followJob(detail.activeJobId, detail.activeJobKind ?: "generate") }
+                viewModelScope.launch { followJob(detail.activeJobId) }
             }
         } catch (e: PaperlyException) {
             error = e.message
@@ -106,7 +108,7 @@ class ChatViewModel(
                 val reply = repo.sendMessage(conversationId, content)
                 load()
                 val meta = repo.metaOf(reply)
-                if (meta?.action == "working" && meta.jobId != null) followJob(meta.jobId, meta.kind ?: "generate")
+                if (meta?.action == "working" && meta.jobId != null) followJob(meta.jobId)
             } catch (e: PaperlyException) {
                 messages = messages - optimistic
                 restoredDraft = content
@@ -117,12 +119,12 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun followJob(jobId: String, kind: String) {
+    private suspend fun followJob(jobId: String) {
         if (generating) return
-        jobKind = kind
+        jobKind = "thinking"
         generating = true
         try {
-            repo.awaitJob(jobId)
+            repo.awaitJob(jobId) { stage -> jobKind = stage }
         } catch (e: PaperlyException) {
             error = e.message
         } finally {
@@ -173,7 +175,7 @@ fun ChatScreen(vm: ChatViewModel, openPicker: Boolean, onBack: () -> Unit, onOpe
     LaunchedEffect(vm.restoredDraft) {
         vm.restoredDraft?.let { if (input.isBlank()) input = it; vm.restoredDraft = null }
     }
-    val extraItems = (if (vm.sending) 1 else 0) + (if (vm.generating) 1 else 0)
+    val extraItems = if (vm.sending || vm.generating) 1 else 0
     LaunchedEffect(vm.messages.size, extraItems) {
         val total = vm.messages.size + extraItems
         if (total > 0) listState.animateScrollToItem(total - 1)
@@ -189,6 +191,7 @@ fun ChatScreen(vm: ChatViewModel, openPicker: Boolean, onBack: () -> Unit, onOpe
                         Text(vm.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             when {
+                                vm.generating && vm.jobKind == "thinking" -> "Thinking…"
                                 vm.generating -> jobTitle(vm.jobKind) + "…"
                                 vm.sending -> "Thinking…"
                                 else -> "Paperly AI assistant"
@@ -278,18 +281,19 @@ fun ChatScreen(vm: ChatViewModel, openPicker: Boolean, onBack: () -> Unit, onOpe
                 when {
                     msg.role == "user" -> UserBubble(msg.content)
                     (meta?.action == "paper_ready" || meta?.action == "paper_updated") && meta.paperId != null ->
-                        PaperReadyCard(msg.content, updated = meta.action == "paper_updated", version = meta.version) {
+                        PaperReadyCard(msg.content, updated = meta.action == "paper_updated", version = meta.version,
+                            changes = meta.changes.orEmpty()) {
                             onOpenPaper(meta.paperId, vm.title)
                         }
                     else -> AssistantBubble(msg.content, isError = meta?.action == "error")
                 }
             }
-            if (vm.sending) {
+            if (vm.sending || (vm.generating && vm.jobKind == "thinking")) {
                 item(key = "typing") {
                     AssistantRow { TypingIndicator(Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) }
                 }
             }
-            if (vm.generating) {
+            if (vm.generating && vm.jobKind != "thinking") {
                 item(key = "generating") { GeneratingCard(vm.jobKind) }
             }
         }
@@ -340,7 +344,7 @@ private fun AssistantBubble(text: String, isError: Boolean) {
 }
 
 @Composable
-private fun PaperReadyCard(text: String, updated: Boolean, version: Int?, onOpen: () -> Unit) {
+private fun PaperReadyCard(text: String, updated: Boolean, version: Int?, changes: List<ChangeDto>, onOpen: () -> Unit) {
     AnimatedVisibility(visible = true, enter = fadeIn() + slideInVertically { it / 3 }) {
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -356,12 +360,17 @@ private fun PaperReadyCard(text: String, updated: Boolean, version: Int?, onOpen
                     ) { Icon(Icons.Rounded.TaskAlt, null, tint = Success) }
                     Spacer(Modifier.width(12.dp))
                     Text(
-                        if (updated) "Paper updated" + (version?.let { " · v$it" } ?: "") else "Paper ready",
+                        if (updated) "Updated" + (version?.let { " · v$it" } ?: "") else "Ready",
                         style = MaterialTheme.typography.titleMedium
                     )
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                changes.take(4).forEach { c -> ChangeRow(c) }
+                if (changes.size > 4) {
+                    Text("+${changes.size - 4} more changes", style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(top = 6.dp))
+                }
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = onOpen, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.MenuBook, null, Modifier.size(18.dp))
@@ -373,15 +382,45 @@ private fun PaperReadyCard(text: String, updated: Boolean, version: Int?, onOpen
     }
 }
 
+@Composable
+private fun ChangeRow(change: ChangeDto) {
+    val before = change.before.orEmpty().trim()
+    val after = change.after.orEmpty().trim()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .padding(12.dp)
+    ) {
+        if (before.isNotEmpty()) {
+            Text(
+                before,
+                style = MaterialTheme.typography.bodySmall.copy(textDecoration = TextDecoration.LineThrough),
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (after.isNotEmpty()) {
+            if (before.isNotEmpty()) Spacer(Modifier.height(6.dp))
+            Text(after, style = MaterialTheme.typography.bodySmall, color = Success, maxLines = 6, overflow = TextOverflow.Ellipsis)
+        } else {
+            Text("Removed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 private fun jobTitle(kind: String) = when (kind) {
-    "import" -> "Reading your document"
+    "convert", "import" -> "Rebuilding your document"
     "edit" -> "Updating your paper"
     else -> "Writing your paper"
 }
 
 private fun jobSteps(kind: String) = when (kind) {
-    "import" -> listOf(0 to "Reading the document", 8 to "Copying every question exactly", 25 to "Applying your change", 45 to "Formatting the paper")
-    "edit" -> listOf(0 to "Understanding the change", 5 to "Editing the paper", 20 to "Checking the rest is unchanged", 40 to "Saving a new version")
+    "convert", "import" -> listOf(0 to "Reading the document", 8 to "Copying every question exactly", 25 to "Applying your change", 45 to "Formatting the paper")
+    "edit" -> listOf(0 to "Understanding the change", 3 to "Editing the document", 15 to "Checking the rest is unchanged", 30 to "Saving a new version")
     else -> listOf(0 to "Understanding your requirements", 6 to "Drafting questions", 25 to "Checking answers & calculations", 50 to "Formatting the paper")
 }
 

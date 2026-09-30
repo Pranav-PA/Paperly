@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +21,26 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import com.paperly.app.data.model.DocBlock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,13 +97,36 @@ class PaperViewModel(private val repo: PaperlyRepository, val paperId: String) :
         }
     }
 
+    /** Page images for PDF documents, keyed by "version:page". */
+    val pages = mutableStateMapOf<String, ImageBitmap>()
+
+    fun loadPage(page: Int) {
+        val version = paper?.versionNumber ?: 0
+        val key = "$version:$page"
+        if (pages.containsKey(key)) return
+        viewModelScope.launch {
+            runCatching { repo.pageImage(paperId, page, version) }.getOrNull()?.let { bytes ->
+                withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                    ?.let { pages[key] = it.asImageBitmap() }
+            }
+        }
+    }
+
+    /** Every edit goes through the chat assistant, so it's the same as asking in the chat. */
     fun edit(instruction: String, onFailed: (String) -> Unit) {
         editing = true
         viewModelScope.launch {
             try {
-                val result = repo.editPaper(paperId, instruction)
-                paper = result.paper
-                notice = "Version ${result.versionNumber}: ${result.changeSummary}"
+                val conversationId = paper?.conversationId
+                if (conversationId != null) {
+                    val reply = repo.chatAndWait(conversationId, instruction)
+                    paper = repo.paper(paperId)
+                    notice = reply?.content?.take(300)
+                } else {
+                    val result = repo.editPaper(paperId, instruction)
+                    paper = result.paper
+                    notice = "Version ${result.versionNumber}: ${result.changeSummary}"
+                }
             } catch (e: PaperlyException) {
                 notice = e.message
                 onFailed(instruction)
@@ -216,6 +260,29 @@ fun PaperScreen(vm: PaperViewModel, onBack: () -> Unit) {
                     Button(onClick = vm::load) { Text("Try again") }
                 }
             }
+            paper.docKind == "pdf" -> LazyColumn(
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize().padding(padding)
+            ) {
+                item { DocumentHeader(paper, "PDF · ${paper.pageCount ?: 0} page${if (paper.pageCount == 1) "" else "s"}") }
+                items((1..(paper.pageCount ?: 0)).toList(), key = { "page-$it" }) { page ->
+                    LaunchedEffect(page, paper.versionNumber) { vm.loadPage(page) }
+                    PdfPage(vm.pages["${paper.versionNumber ?: 0}:$page"], page)
+                }
+            }
+            paper.docKind == "docx" -> LazyColumn(
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize().padding(padding)
+            ) {
+                item { DocumentHeader(paper, "Word document") }
+                item {
+                    WordPreview(paper.blocks.orEmpty()) { block ->
+                        if (!vm.editing) editText = "Change \"${block.text.trim().take(60)}\" to "
+                    }
+                }
+            }
             else -> LazyColumn(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -293,6 +360,109 @@ fun PaperScreen(vm: PaperViewModel, onBack: () -> Unit) {
                             TextButton(onClick = { vm.revert(v.versionNumber); showVersions = false }) { Text("Restore") }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentHeader(paper: Paper, kindLabel: String) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(26.dp))
+            .background(LocalPaperlyExtras.current.heroGradient)
+            .padding(20.dp)
+    ) {
+        Column {
+            Text(paper.metadata.title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill(kindLabel, Color.White, icon = Icons.Rounded.Description)
+                paper.versionNumber?.let { Pill("v$it", Color.White) }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Your original file: edits change only what you ask, everything else keeps its exact formatting.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.85f)
+            )
+        }
+    }
+}
+
+/** One PDF page, pinch to zoom. */
+@Composable
+private fun PdfPage(image: ImageBitmap?, page: Int) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = Color.White,
+        shadowElevation = 3.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (image == null) {
+            Box(Modifier.fillMaxWidth().aspectRatio(0.707f), Alignment.Center) {
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+            }
+        } else {
+            Image(
+                bitmap = image,
+                contentDescription = "Page $page",
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(image.width.toFloat() / image.height)
+                    .clipToBounds()
+                    .pointerInput(Unit) {
+                        // Only pinches (or drags while zoomed in) are handled here; one-finger swipes scroll the list.
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            do {
+                                val event = awaitPointerEvent()
+                                if (event.changes.size > 1 || scale > 1f) {
+                                    scale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
+                                    offset = if (scale == 1f) Offset.Zero else offset + event.calculatePan()
+                                    event.changes.forEach { it.consume() }
+                                }
+                            } while (event.changes.any { it.pressed })
+                        }
+                    }
+                    .graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }
+            )
+        }
+    }
+}
+
+/** Readable preview of a Word document; tap a line to target it in the edit box. */
+@Composable
+private fun WordPreview(blocks: List<DocBlock>, onTap: (DocBlock) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = Color.White,
+        shadowElevation = 3.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 20.dp)) {
+            blocks.forEach { b ->
+                if (b.text.isBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                } else {
+                    Text(
+                        b.text,
+                        color = Color(0xFF111111),
+                        fontWeight = if (b.bold) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = ((b.size ?: 11.0).coerceIn(8.0, 20.0) * 1.15).sp,
+                        lineHeight = ((b.size ?: 11.0).coerceIn(8.0, 20.0) * 1.5).sp,
+                        fontFamily = FontFamily.Serif,
+                        textAlign = when (b.align) { "center" -> TextAlign.Center; "right" -> TextAlign.End; else -> TextAlign.Start },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onTap(b) }
+                            .padding(start = if (b.inTable) 10.dp else 0.dp, top = 2.dp, bottom = 2.dp)
+                    )
                 }
             }
         }
@@ -445,18 +615,26 @@ private fun QuestionCard(q: Question, showAnswers: Boolean, onTap: () -> Unit) {
 @Composable
 private fun ExportSheet(vm: PaperViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val docKind = vm.paper?.docKind ?: "paperly"
     var kind by remember { mutableStateOf(ExportKind.PAPER) }
-    var format by remember { mutableStateOf("pdf") }
+    var format by remember { mutableStateOf(if (docKind == "docx") "docx" else "pdf") }
 
     fun run(action: (File) -> Unit) = vm.export(kind, format, action)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
             Text("Export", style = MaterialTheme.typography.titleLarge)
-            Text("Print-ready PDF or editable Word document", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                when (docKind) {
+                    "pdf" -> "Your PDF with your changes, exact original layout"
+                    "docx" -> "Your Word file with your changes, exact original formatting"
+                    else -> "Print-ready PDF or editable Word document"
+                },
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(16.dp))
 
-            listOf(
+            if (docKind == "paperly") listOf(
                 Triple(ExportKind.PAPER, "Question paper", "For students; no answers"),
                 Triple(ExportKind.SOLUTIONS, "Answer key & solutions", "Step-by-step, for teachers"),
                 Triple(ExportKind.PAPER_WITH_ANSWERS, "Paper with answers", "Questions followed by answers"),
@@ -480,8 +658,8 @@ private fun ExportSheet(vm: PaperViewModel, onDismiss: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            if (docKind == "paperly") Spacer(Modifier.height(12.dp))
+            if (docKind == "paperly") SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 listOf("pdf" to "PDF", "docx" to "Word (DOCX)").forEachIndexed { i, (value, label) ->
                     SegmentedButton(
                         selected = format == value,

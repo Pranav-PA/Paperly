@@ -57,8 +57,13 @@ class Settings(BaseSettings):
             "your_gemini_api_key_here",
         )
 
+    @property
+    def DOCS_DIR(self) -> str:
+        return str(Path(self.UPLOAD_DIR) / "documents")
+
     def ensure_directories(self) -> None:
         Path(self.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+        Path(self.DOCS_DIR).mkdir(parents=True, exist_ok=True)
         Path(self.GENERATED_PAPERS_DIR).mkdir(parents=True, exist_ok=True)
 
 

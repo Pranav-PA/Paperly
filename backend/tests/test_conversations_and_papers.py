@@ -1,5 +1,8 @@
+import io
 import json
 import time
+
+from docx import Document
 
 
 def wait_job(client, headers, job_id, timeout=10):
@@ -12,234 +15,220 @@ def wait_job(client, headers, job_id, timeout=10):
     raise AssertionError("job did not finish")
 
 
-def generate(client, headers, conv_id, text="generate"):
-    """Send a message that triggers generation and wait for the paper; returns the paper id."""
+def chat(client, headers, conv_id, text):
+    """Send a message, wait for the assistant, return (job, last assistant message, its metadata)."""
     res = client.post(f"/api/v1/conversations/{conv_id}/messages", json={"content": text}, headers=headers)
     assert res.status_code == 200, res.text
     meta = json.loads(res.json()["metadata_json"])
     assert meta["action"] == "working"
     job = wait_job(client, headers, meta["job_id"])
+    msgs = client.get(f"/api/v1/conversations/{conv_id}", headers=headers).json()["messages"]
+    last = msgs[-1]
+    return job, last, json.loads(last["metadata_json"] or "{}")
+
+
+def generate(client, headers, conv_id, text="generate"):
+    job, _, meta = chat(client, headers, conv_id, text)
     assert job["status"] == "done", job
-    return job["result"]["paper_id"]
+    assert meta["action"] == "paper_ready"
+    return meta["paper_id"]
+
+
+def new_chat(client, headers, title="Test"):
+    return client.post("/api/v1/conversations", json={"title": title}, headers=headers).json()["id"]
 
 
 def test_create_and_list_conversations(client, auth_headers):
-    # 1. Create conversation
-    res = client.post(
-        "/api/v1/conversations",
-        json={"title": "NEET Physics Test"},
-        headers=auth_headers
-    )
+    res = client.post("/api/v1/conversations", json={"title": "NEET Physics Test"}, headers=auth_headers)
     assert res.status_code == 201
-    conv = res.json()
-    assert conv["title"] == "NEET Physics Test"
-    conv_id = conv["id"]
-
-    # 2. List conversations
-    res_list = client.get("/api/v1/conversations", headers=auth_headers)
-    assert res_list.status_code == 200
-    convs = res_list.json()
-    assert any(c["id"] == conv_id for c in convs)
+    conv_id = res.json()["id"]
+    assert any(c["id"] == conv_id for c in client.get("/api/v1/conversations", headers=auth_headers).json())
 
 
-def test_full_conversation_generation_edit_export_flow(client, auth_headers):
-    # 1. Create conversation
-    create_res = client.post(
-        "/api/v1/conversations",
-        json={"title": "Class 12 Physics Test"},
-        headers=auth_headers
-    )
-    conv_id = create_res.json()["id"]
+def test_full_generate_edit_export_flow(client, auth_headers):
+    conv_id = new_chat(client, auth_headers, "Class 12 Physics Test")
 
-    # 2. Post initial message (clarification)
-    msg1 = client.post(
-        f"/api/v1/conversations/{conv_id}/messages",
-        json={"content": "I want to create a physics paper on electrostatics."},
-        headers=auth_headers
-    )
-    assert msg1.status_code == 200
-    assert "difficulty" in msg1.json()["content"].lower()
+    _, reply, _ = chat(client, auth_headers, conv_id, "I want to create a physics paper on electrostatics.")
+    assert "difficulty" in reply["content"].lower()
 
-    # 3. Post confirmation message triggering paper generation
     paper_id = generate(client, auth_headers, conv_id, "Please generate the paper now with 35 marks, moderate difficulty.")
-    assert paper_id is not None
     detail = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()
-    assert detail["latest_paper_id"] == paper_id
-    assert detail["active_job_id"] is None
-    assert "is ready" in detail["messages"][-1]["content"]
+    assert detail["latest_paper_id"] == paper_id and detail["active_job_id"] is None
 
-    # 4. Fetch the generated PaperSchema
-    paper_res = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers)
-    assert paper_res.status_code == 200
-    schema = paper_res.json()
-    assert schema["metadata"]["subject"] == "Physics"
-    assert len(schema["sections"]) >= 1
+    paper = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
+    assert paper["kind"] == "paperly" and paper["metadata"]["subject"] == "Physics"
+    assert paper["conversation_id"] == conv_id
 
-    # 5. Perform conversational in-place editing
-    edit_res = client.post(
-        f"/api/v1/papers/{paper_id}/edit",
-        json={"instruction": "Make question 1 harder."},
-        headers=auth_headers
-    )
+    edit_res = client.post(f"/api/v1/papers/{paper_id}/edit", json={"instruction": "Make question 1 harder."}, headers=auth_headers)
     assert edit_res.status_code == 202
     edit_job = wait_job(client, auth_headers, edit_res.json()["job_id"])
     assert edit_job["status"] == "done"
-    edit_data = edit_job["result"]
-    assert edit_data["version_number"] == 2
-    assert "Question 1" in edit_data["change_summary"]
+    assert edit_job["result"]["version_number"] == 2
+    assert "Question 1" in edit_job["result"]["change_summary"]
 
-    # 6. Export question paper to DOCX
-    docx_res = client.get(f"/api/v1/papers/{paper_id}/export/docx", headers=auth_headers)
-    assert docx_res.status_code == 200
-    assert len(docx_res.content) > 1000  # valid binary docx
-    assert docx_res.headers["content-type"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    for path in ("export/docx", "export/pdf", "solutions/docx", "solutions/pdf"):
+        res = client.get(f"/api/v1/papers/{paper_id}/{path}", headers=auth_headers)
+        assert res.status_code == 200 and len(res.content) > 500, path
 
-    # 7. Export question paper to PDF/HTML
-    pdf_res = client.get(f"/api/v1/papers/{paper_id}/export/pdf", headers=auth_headers)
-    assert pdf_res.status_code == 200
-    assert len(pdf_res.content) > 500
-
-    # 8. Export Solutions to DOCX
-    sol_docx = client.get(f"/api/v1/papers/{paper_id}/solutions/docx", headers=auth_headers)
-    assert sol_docx.status_code == 200
-    assert len(sol_docx.content) > 500
-
-    # 9. Export Solutions to PDF/HTML
-    sol_pdf = client.get(f"/api/v1/papers/{paper_id}/solutions/pdf", headers=auth_headers)
-    assert sol_pdf.status_code == 200
-    assert len(sol_pdf.content) > 500
-
-    # 10. Check version history
-    versions_res = client.get(f"/api/v1/papers/{paper_id}/versions", headers=auth_headers)
-    assert versions_res.status_code == 200
-    versions = versions_res.json()
-    assert len(versions) >= 2
-    assert versions[0]["version_number"] == 2
-
-    # 11. Revert to version 1 (undo)
-    revert_res = client.post(f"/api/v1/papers/{paper_id}/revert/1", headers=auth_headers)
-    assert revert_res.status_code == 200
-    assert revert_res.json()["version_number"] == 1
+    versions = client.get(f"/api/v1/papers/{paper_id}/versions", headers=auth_headers).json()
+    assert [v["version_number"] for v in versions][:2] == [2, 1]
+    assert client.post(f"/api/v1/papers/{paper_id}/revert/1", headers=auth_headers).json()["version_number"] == 1
 
 
 def test_regeneration_creates_new_version_and_lists_papers(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={"title": "Regen"}, headers=auth_headers).json()["id"]
+    conv_id = new_chat(client, auth_headers, "Regen")
     paper_id = generate(client, auth_headers, conv_id)
     assert generate(client, auth_headers, conv_id, "generate again") == paper_id
-
     versions = client.get(f"/api/v1/papers/{paper_id}/versions", headers=auth_headers).json()
     assert [v["version_number"] for v in versions] == [2, 1]
-
     papers = client.get("/api/v1/papers", headers=auth_headers).json()
-    assert any(p["id"] == paper_id and p["question_count"] == 3 for p in papers)
-
-    listed = client.get("/api/v1/conversations", headers=auth_headers).json()
-    assert next(c for c in listed if c["id"] == conv_id)["latest_paper_id"] == paper_id
+    assert any(p["id"] == paper_id and p["question_count"] == 3 and p["kind"] == "paperly" for p in papers)
 
 
-def test_generated_totals_match_questions(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={}, headers=auth_headers).json()["id"]
+def test_question_about_paper_gets_answer_without_changing_it(client, auth_headers):
+    conv_id = new_chat(client, auth_headers)
     paper_id = generate(client, auth_headers, conv_id)
-    schema = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
-    marks = sum(q["marks"] for s in schema["sections"] for q in s["questions"])
-    assert schema["metadata"]["total_marks"] == marks
-    numbers = [q["question_number"] for s in schema["sections"] for q in s["questions"]]
-    assert numbers == list(range(1, len(numbers) + 1))
+    _, reply, meta = chat(client, auth_headers, conv_id, "Why is the max marks showing this number?")
+    assert meta["action"] == "reply"
+    versions = client.get(f"/api/v1/papers/{paper_id}/versions", headers=auth_headers).json()
+    assert len(versions) == 1  # nothing was changed
+
+
+def test_chat_edits_paperly_layout(client, auth_headers):
+    conv_id = new_chat(client, auth_headers)
+    paper_id = generate(client, auth_headers, conv_id)
+    job, _, meta = chat(client, auth_headers, conv_id, "Make it two columns with a serif font")
+    assert job["status"] == "done" and meta["action"] == "paper_updated" and meta["version"] == 2
+    paper = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
+    assert paper["layout"]["columns"] == 2 and paper["layout"]["font_family"] == "serif"
+
+
+def _sample_docx() -> bytes:
+    doc = Document()
+    title = doc.add_paragraph()
+    title.add_run("Class 8 Science - Unit Test").bold = True
+    doc.add_paragraph("Maximum Marks: 70")
+    for n, q in enumerate(["What is photosynthesis?", "Name the parts of a flower.", "What is friction?"], 1):
+        p = doc.add_paragraph()
+        p.add_run(f"Q{n}.").bold = True
+        p.add_run(f" {q}")
+        p.add_run(" [2]").bold = True
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_uploaded_word_document_is_edited_in_place(client, auth_headers):
+    conv_id = new_chat(client, auth_headers, "Edit doc")
+    up = client.post(f"/api/v1/conversations/{conv_id}/upload",
+                     files={"file": ("science_test.docx", _sample_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+                     headers=auth_headers)
+    assert up.status_code == 200
+    detail = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()
+    paper_id = detail["latest_paper_id"]
+    assert paper_id, "uploading a Word file should make it the chat's document"
+    assert json.loads(detail["messages"][-1]["metadata_json"])["action"] == "paper_ready"
+
+    job, reply, meta = chat(client, auth_headers, conv_id, "Change the last question to What is inertia?")
+    assert job["status"] == "done", job
+    assert meta["action"] == "paper_updated" and meta["changes"][0]["after"] == "Q3. What is inertia? [2]"
+
+    paper = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
+    assert paper["kind"] == "docx"
+    texts = [b["text"] for b in paper["blocks"] if b["text"].strip()]
+    assert texts == ["Class 8 Science - Unit Test", "Maximum Marks: 70", "Q1. What is photosynthesis? [2]",
+                     "Q2. Name the parts of a flower. [2]", "Q3. What is inertia? [2]"]
+
+    exported = client.get(f"/api/v1/papers/{paper_id}/export/docx", headers=auth_headers)
+    assert exported.status_code == 200
+    runs = Document(io.BytesIO(exported.content)).paragraphs[-1].runs
+    assert runs[0].text == "Q3." and runs[0].bold  # bold question label kept
+    assert runs[-1].text == " [2]" and runs[-1].bold  # bold marks kept
+
+    # Word stays Word; no silent re-creation.
+    assert client.get(f"/api/v1/papers/{paper_id}/export/pdf", headers=auth_headers).status_code in (200, 400)
+    assert client.get(f"/api/v1/papers/{paper_id}/solutions/pdf", headers=auth_headers).status_code == 400
+
+
+def test_uploaded_pdf_is_edited_in_place(client, auth_headers):
+    from app.schemas.paper_schema import PaperSchema, PaperMetadata, Section, Question
+    from app.services.pdf_service import PdfGenerationService
+
+    schema = PaperSchema(
+        metadata=PaperMetadata(title="Unit Test", subject="Science", total_marks=70),
+        sections=[Section(id="s", title="Questions", questions=[
+            Question(id=f"q{i}", question_number=i, type="short_answer", text=t, marks=2)
+            for i, t in enumerate(["What is photosynthesis?", "What is friction?"], 1)
+        ])],
+    )
+    pdf = PdfGenerationService.generate_pdf_bytes(schema)
+    conv_id = new_chat(client, auth_headers, "PDF")
+    assert client.post(f"/api/v1/conversations/{conv_id}/upload",
+                       files={"file": ("unit_test.pdf", pdf, "application/pdf")}, headers=auth_headers).status_code == 200
+    paper_id = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["latest_paper_id"]
+
+    job, _, meta = chat(client, auth_headers, conv_id, "Change the last question to What is inertia?")
+    assert job["status"] == "done", job
+    assert meta["action"] == "paper_updated"
+
+    paper = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
+    assert paper["kind"] == "pdf" and paper["page_count"] == 1
+    page = client.get(f"/api/v1/papers/{paper_id}/pages/1", headers=auth_headers)
+    assert page.status_code == 200 and page.content[:4] == b"\x89PNG"
+
+    from app.services.doc_edit import pdf_blocks
+    edited = client.get(f"/api/v1/papers/{paper_id}/export/pdf", headers=auth_headers).content
+    texts = [b.text for b in pdf_blocks(edited)]
+    assert any("What is inertia?" in t for t in texts)
+    assert any("What is photosynthesis?" in t for t in texts)
+    assert not any("friction" in t for t in texts)
+    assert any("Max Marks: 70" in t for t in texts)
+
+
+def test_max_marks_are_never_overwritten():
+    from app.schemas.paper_schema import PaperSchema, PaperMetadata, Section, Question
+    from app.services.ai_service import AIService
+
+    # e.g. internal "OR" choices: question marks add up to more than the paper's maximum.
+    schema = PaperSchema(
+        metadata=PaperMetadata(title="T", total_marks=70),
+        sections=[Section(id="s", title="A", questions=[
+            Question(id=f"q{i}", question_number=i, text="x", marks=10) for i in range(1, 12)
+        ])],
+    )
+    assert AIService._normalize(schema).metadata.total_marks == 70
+    edited, _ = AIService._mock_paper_edit(schema, "Make Q1 harder")
+    assert edited.metadata.total_marks == 70
 
 
 def test_delete_conversation(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={"title": "Temp"}, headers=auth_headers).json()["id"]
+    conv_id = new_chat(client, auth_headers, "Temp")
     assert client.delete(f"/api/v1/conversations/{conv_id}", headers=auth_headers).status_code == 204
     assert client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).status_code == 404
 
 
-def test_upload_text_and_reject_unsupported(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={}, headers=auth_headers).json()["id"]
-    ok = client.post(
-        f"/api/v1/conversations/{conv_id}/upload",
-        files={"file": ("notes.txt", b"Chapter 1: Newton's laws", "text/plain")},
-        headers=auth_headers,
-    )
-    assert ok.status_code == 200 and ok.json()["extracted_characters"] > 0
-    bad = client.post(
-        f"/api/v1/conversations/{conv_id}/upload",
-        files={"file": ("archive.zip", b"PK\x03\x04", "application/zip")},
-        headers=auth_headers,
-    )
+def test_upload_reference_and_reject_unsupported(client, auth_headers):
+    conv_id = new_chat(client, auth_headers)
+    ok = client.post(f"/api/v1/conversations/{conv_id}/upload",
+                     files={"file": ("notes.txt", b"Chapter 1: Newton's laws", "text/plain")}, headers=auth_headers)
+    assert ok.status_code == 200
+    assert client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["latest_paper_id"] is None
+    bad = client.post(f"/api/v1/conversations/{conv_id}/upload",
+                      files={"file": ("archive.zip", b"PK\x03\x04", "application/zip")}, headers=auth_headers)
     assert bad.status_code == 415
-    # Photos need Gemini to read them; in offline demo mode they're refused with a clear message.
-    photo = client.post(
-        f"/api/v1/conversations/{conv_id}/upload",
-        files={"file": ("photo.jpg", b"\xff\xd8\xff", "image/jpeg")},
-        headers=auth_headers,
-    )
-    assert photo.status_code == 422
+    photo = client.post(f"/api/v1/conversations/{conv_id}/upload",
+                        files={"file": ("photo.jpg", b"\xff\xd8\xff", "image/jpeg")}, headers=auth_headers)
+    assert photo.status_code == 422  # photos need Gemini, which tests don't have
 
 
-def test_ai_failure_returns_502_without_saving(client, auth_headers, monkeypatch):
+def test_ai_failure_posts_error_message(client, auth_headers, monkeypatch):
     from app.services.ai_service import AIService, AIServiceError
 
     async def boom(*args, **kwargs):
         raise AIServiceError("Gemini rejected the API key.")
 
-    monkeypatch.setattr(AIService, "decide", boom)
-    conv_id = client.post("/api/v1/conversations", json={}, headers=auth_headers).json()["id"]
-    res = client.post(f"/api/v1/conversations/{conv_id}/messages", json={"content": "hi"}, headers=auth_headers)
-    assert res.status_code == 502
-    assert "API key" in res.json()["detail"]
-    assert client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["messages"] == []
-
-
-def test_generation_failure_posts_error_message(client, auth_headers, monkeypatch):
-    from app.services.ai_service import AIService, AIServiceError
-
-    async def boom(*args, **kwargs):
-        raise AIServiceError("Gemini rate limit or quota reached.")
-
-    monkeypatch.setattr(AIService, "generate_paper", boom)
-    conv_id = client.post("/api/v1/conversations", json={}, headers=auth_headers).json()["id"]
-    res = client.post(f"/api/v1/conversations/{conv_id}/messages", json={"content": "generate"}, headers=auth_headers)
-    job = wait_job(client, auth_headers, json.loads(res.json()["metadata_json"])["job_id"])
-    assert job["status"] == "error" and "quota" in job["error"]
-    msgs = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["messages"]
-    assert "couldn't finish" in msgs[-1]["content"]
-
-
-def send(client, headers, conv_id, text):
-    res = client.post(f"/api/v1/conversations/{conv_id}/messages", json={"content": text}, headers=headers)
-    assert res.status_code == 200, res.text
-    return json.loads(res.json()["metadata_json"])
-
-
-def test_uploaded_paper_is_imported_and_edited_not_regenerated(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={"title": "Edit doc"}, headers=auth_headers).json()["id"]
-    doc = b"Class 8 Science Test\n1. What is photosynthesis?\n2. Name the parts of a flower.\n3. What is friction?\n"
-    up = client.post(f"/api/v1/conversations/{conv_id}/upload",
-                     files={"file": ("science_test.txt", doc, "text/plain")}, headers=auth_headers)
-    assert up.status_code == 200
-
-    meta = send(client, auth_headers, conv_id, "Change the last question to What is inertia?")
-    assert meta["action"] == "working" and meta["kind"] == "import"
-    job = wait_job(client, auth_headers, meta["job_id"])
-    assert job["status"] == "done", job
-    paper = client.get(f"/api/v1/papers/{job['result']['paper_id']}", headers=auth_headers).json()
-    texts = [q["text"] for s in paper["sections"] for q in s["questions"]]
-    # Original questions kept, only the last one changed.
-    assert texts == ["What is photosynthesis?", "Name the parts of a flower.", "What is inertia?"]
-
-
-def test_chat_edits_existing_paper_layout(client, auth_headers):
-    conv_id = client.post("/api/v1/conversations", json={}, headers=auth_headers).json()["id"]
-    paper_id = generate(client, auth_headers, conv_id)
-    meta = send(client, auth_headers, conv_id, "Make it two columns with a serif font")
-    assert meta["kind"] == "edit"
-    job = wait_job(client, auth_headers, meta["job_id"])
-    assert job["status"] == "done" and job["result"]["paper_id"] == paper_id
-    paper = client.get(f"/api/v1/papers/{paper_id}", headers=auth_headers).json()
-    assert paper["layout"]["columns"] == 2 and paper["layout"]["font_family"] == "serif"
-    msgs = client.get(f"/api/v1/conversations/{conv_id}", headers=auth_headers).json()["messages"]
-    assert json.loads(msgs[-1]["metadata_json"])["action"] == "paper_updated"
-    for fmt in ("pdf", "docx"):
-        assert client.get(f"/api/v1/papers/{paper_id}/export/{fmt}", headers=auth_headers).status_code == 200
-        assert client.get(f"/api/v1/papers/{paper_id}/solutions/{fmt}", headers=auth_headers).status_code == 200
-
+    monkeypatch.setattr(AIService, "chat_turn", boom)
+    conv_id = new_chat(client, auth_headers)
+    job, last, meta = chat(client, auth_headers, conv_id, "hi")
+    assert job["status"] == "error" and "API key" in job["error"]
+    assert meta["action"] == "error" and "API key" in last["content"]

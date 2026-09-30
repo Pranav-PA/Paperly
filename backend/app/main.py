@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import migrate
 import app.models  # Ensure all SQLAlchemy models are registered
 from app.api.v1 import api_v1_router
 
@@ -20,7 +20,7 @@ logger = logging.getLogger("paperly")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Ensure database tables exist
-    Base.metadata.create_all(bind=engine)
+    migrate()
     settings.ensure_directories()
     if settings.ai_enabled:
         logger.info("Gemini enabled, model: %s", settings.GEMINI_MODEL)

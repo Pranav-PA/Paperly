@@ -190,7 +190,7 @@ class PaperlyRepository(
 
     // ---------- Jobs ----------
     /** Poll a background job until it finishes. Returns the finished job (status done or error). */
-    suspend fun awaitJob(jobId: String): JobStatus {
+    suspend fun awaitJob(jobId: String, onStage: (String) -> Unit = {}): JobStatus {
         var networkFailures = 0
         while (true) {
             val job = try {
@@ -203,6 +203,7 @@ class PaperlyRepository(
                 if (e.isAuthError || ++networkFailures >= 5) throw e
                 null
             }
+            job?.stage?.let(onStage)
             if (job != null && job.status != "running") return job
             delay(2500)
         }
@@ -228,6 +229,28 @@ class PaperlyRepository(
     }
 
     suspend fun versions(id: String) = call { versions(id) }
+
+    /** PNG bytes of one PDF page (the server caches renders per version). */
+    suspend fun pageImage(paperId: String, page: Int, version: Int): ByteArray {
+        val response = call { page(paperId, page, version) }
+        if (!response.isSuccessful) throw PaperlyException(httpMessage(response.code()))
+        return withContext(Dispatchers.IO) {
+            response.body()?.bytes() ?: throw PaperlyException("Empty page image.")
+        }
+    }
+
+    /**
+     * Send a chat message and wait for Paperly's answer. Returns the assistant's reply message
+     * (null if the conversation couldn't be reloaded). onStage reports thinking / edit / generate / convert.
+     */
+    suspend fun chatAndWait(conversationId: String, text: String, onStage: (String) -> Unit = {}): Message? {
+        val sent = sendMessage(conversationId, text)
+        metaOf(sent)?.jobId?.let { jobId ->
+            val job = awaitJob(jobId, onStage)
+            if (job.status == "error") throw PaperlyException(job.error ?: "Something went wrong.")
+        }
+        return conversation(conversationId).messages.lastOrNull { it.role == "assistant" }
+    }
 
     suspend fun revert(id: String, version: Int) {
         call { revert(id, version) }.let {

@@ -34,3 +34,24 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def migrate() -> None:
+    """Create tables and add columns introduced after the first release (SQLite has no auto-migrate)."""
+    from sqlalchemy import inspect, text
+    import app.models  # noqa: F401  (register models)
+
+    Base.metadata.create_all(bind=engine)
+    added = {
+        "paper_versions": {
+            "doc_kind": "VARCHAR(20) NOT NULL DEFAULT 'paperly'",
+            "file_name": "VARCHAR(255)",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, columns in added.items():
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))

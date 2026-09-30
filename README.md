@@ -12,6 +12,7 @@ The backend runs on an **old Android phone (Termux)** and uses **Google Gemini 3
 
 ## ✨ Features
 
+- 📄 **Edit your own papers like with Claude**: upload a Word or PDF paper and just say what to change ("change the last question to …", "make Q5 worth 3 marks"). Only that text changes; everything else keeps its exact formatting. You see a before → after of every change, and every version can be restored. Ask questions about the paper too ("why does the total say 110?").
 - 💬 **Chat to create**: "Class 10 Maths, Quadratic Equations, 40 marks". Paperly asks only for what's missing.
 - 📐 **Checked answers**: every numerical question is worked out and double-checked before the options are written.
 - 📎 **Use your material**: attach PDF / DOCX / TXT notes or a syllabus as reference.

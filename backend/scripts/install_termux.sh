@@ -27,6 +27,8 @@ pkg install -y python-pillow || true
 pkg install -y python-lxml || true
 # Unicode fonts so PDFs show symbols like π, √, θ, ² instead of boxes.
 pkg install -y ttf-dejavu || true
+# PDF engine: edits uploaded PDFs in place and renders page previews.
+pkg install -y python-pymupdf || true
 
 echo "=== [2/5] Creating Python environment ==="
 # --system-site-packages lets the venv use the Termux Pillow/lxml installed above.

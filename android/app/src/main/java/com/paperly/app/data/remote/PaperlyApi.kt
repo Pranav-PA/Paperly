@@ -54,6 +54,9 @@ interface PaperlyApi {
     @POST("api/v1/papers/{id}/edit")
     suspend fun editPaper(@Path("id") id: String, @Body body: EditRequest): JobStarted
 
+    @GET("api/v1/papers/{id}/pages/{page}")
+    suspend fun page(@Path("id") id: String, @Path("page") page: Int, @Query("v") version: Int): Response<ResponseBody>
+
     @GET("api/v1/papers/{id}/versions")
     suspend fun versions(@Path("id") id: String): List<PaperVersion>
 

@@ -24,6 +24,7 @@ class Job:
     kind: str
     conversation_id: Optional[str] = None
     status: str = "running"  # running | done | error
+    stage: str = "thinking"  # what the app should show: thinking | edit | generate | convert
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     created_at: float = field(default_factory=time.time)
@@ -42,7 +43,7 @@ def _prune() -> None:
 def start_job(
     kind: str,
     user_id: str,
-    work: Callable[[], Awaitable[Dict[str, Any]]],
+    work: Callable[["Job"], Awaitable[Dict[str, Any]]],
     on_error: Callable[[str], None],
     conversation_id: Optional[str] = None,
 ) -> Job:
@@ -53,7 +54,7 @@ def start_job(
 
     async def runner():
         try:
-            job.result = await work()
+            job.result = await work(job)
             job.status = "done"
         except Exception as e:  # noqa: BLE001 - surface every failure to the app
             from app.services.ai_service import AIServiceError

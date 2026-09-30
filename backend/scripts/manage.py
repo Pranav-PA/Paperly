@@ -13,14 +13,14 @@ from pathlib import Path
 backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
-from app.core.database import SessionLocal, engine, Base
+from app.core.database import SessionLocal, migrate
 from app.core.security import get_password_hash
 from app.models.user import User
 import app.models  # ensure models registered
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    migrate()
 
 
 def create_user(username: str, password: str, full_name: str | None = None, role: str = "teacher"):

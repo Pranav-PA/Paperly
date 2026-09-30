@@ -13,4 +13,4 @@ def get_job_status(job_id: str, current_user: User = Depends(get_current_user)):
     job = jobs.get_job(job_id, current_user.id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found (the server may have restarted)")
-    return {"id": job.id, "kind": job.kind, "status": job.status, "result": job.result, "error": job.error}
+    return {"id": job.id, "kind": job.kind, "status": job.status, "stage": job.stage, "result": job.result, "error": job.error}

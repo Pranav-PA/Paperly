@@ -59,10 +59,13 @@ data class ConversationDetail(
 
 data class SendMessageRequest(val content: String)
 
+data class ChangeDto(val before: String?, val after: String?)
+
 data class MessageMeta(
     val action: String?,
     val kind: String?,
     val version: Int?,
+    val changes: List<ChangeDto>?,
     @SerializedName("paper_id") val paperId: String?,
     @SerializedName("job_id") val jobId: String?
 )
@@ -78,6 +81,7 @@ data class JobStarted(@SerializedName("job_id") val jobId: String)
 data class JobStatus(
     val id: String,
     val status: String, // running | done | error
+    val stage: String?, // thinking | edit | generate | convert
     // JsonElement, not JsonObject: while running the server sends null (JsonNull), which crashed v1.1.0.
     val result: JsonElement?,
     val error: String?
@@ -93,7 +97,8 @@ data class PaperSummary(
     @SerializedName("total_marks") val totalMarks: Double,
     @SerializedName("question_count") val questionCount: Int,
     @SerializedName("version_number") val versionNumber: Int,
-    @SerializedName("updated_at") val updatedAt: String
+    @SerializedName("updated_at") val updatedAt: String,
+    val kind: String?
 )
 
 data class QuestionOption(val label: String, val text: String)
@@ -149,11 +154,28 @@ data class PaperLayout(
         ).joinToString(" · ")
 }
 
+data class DocBlock(
+    val id: String,
+    val text: String,
+    val bold: Boolean,
+    val align: String?,
+    val size: Double?,
+    @SerializedName("in_table") val inTable: Boolean
+)
+
 data class Paper(
     val metadata: PaperMetadata,
     val sections: List<Section>,
-    val layout: PaperLayout?
+    val layout: PaperLayout?,
+    /** paperly = created in Paperly; docx / pdf = the teacher's own file, edited in place. */
+    val kind: String?,
+    @SerializedName("conversation_id") val conversationId: String?,
+    @SerializedName("version_number") val versionNumber: Int?,
+    @SerializedName("page_count") val pageCount: Int?,
+    val blocks: List<DocBlock>?
 ) {
+    val docKind: String get() = kind ?: "paperly"
+
     val questionCount: Int get() = sections.sumOf { it.questions.size }
 }
 

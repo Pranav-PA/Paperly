@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,10 +23,11 @@ from app.schemas.conversation import (
     FileUploadResponse,
 )
 from app.schemas.paper_schema import PaperSchema
-from app.services import jobs
+from app.services import doc_edit, documents, jobs
 from app.services.ai_service import AIService, AIServiceError, SourceDoc
 from app.services.extract_service import DocumentExtractionService
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 # Keep prompts bounded on a low-memory phone: total characters of uploaded text sent to the model.
@@ -40,12 +42,6 @@ RAW_TYPES = {
     ".webp": "image/webp",
     ".heic": "image/heic",
     ".heif": "image/heif",
-}
-
-JOB_MESSAGES = {
-    "generate": "Writing your paper now. This usually takes 30-90 seconds.",
-    "import": "Reading your document and applying the change. This usually takes 30-90 seconds.",
-    "edit": "",
 }
 
 
@@ -63,12 +59,11 @@ def _latest_paper(conv_id: str, db: Session) -> Optional[Paper]:
     return db.query(Paper).filter(Paper.conversation_id == conv_id).order_by(Paper.created_at.desc()).first()
 
 
-def _current_schema(conv_id: str, db: Session) -> Optional[PaperSchema]:
+def _current_version(conv_id: str, db: Session) -> Optional[PaperVersion]:
     paper = _latest_paper(conv_id, db)
     if not paper or not paper.current_version_id:
         return None
-    version = db.get(PaperVersion, paper.current_version_id)
-    return PaperSchema.model_validate_json(version.schema_json) if version else None
+    return db.get(PaperVersion, paper.current_version_id)
 
 
 def _raw_path(file_id: str, filename: str) -> Path:
@@ -93,77 +88,139 @@ def _sources(conv_id: str, db: Session) -> List[SourceDoc]:
     return sources
 
 
-def _save_version(conv: Conversation, paper_schema: PaperSchema, summary: str, db: Session) -> Tuple[Paper, int]:
-    """Create the paper on first use; every later change becomes a new version of it."""
+def _save_version(
+    conv: Conversation,
+    db: Session,
+    summary: str,
+    schema: Optional[PaperSchema] = None,
+    doc_kind: str = "paperly",
+    data: Optional[bytes] = None,
+    title: Optional[str] = None,
+) -> Tuple[Paper, PaperVersion]:
+    """Add a version to the chat's document (creating it on first use) and make it current."""
+    title = title or (schema.metadata.title if schema else "Document")
     paper = _latest_paper(conv.id, db)
     if not paper:
-        paper = Paper(conversation_id=conv.id, title=paper_schema.metadata.title)
+        paper = Paper(conversation_id=conv.id, title=title)
         db.add(paper)
         db.flush()
     else:
-        paper.title = paper_schema.metadata.title
+        paper.title = title
 
     last_number = db.query(func.max(PaperVersion.version_number)).filter(PaperVersion.paper_id == paper.id).scalar() or 0
     version = PaperVersion(
+        id=str(uuid.uuid4()),
         paper_id=paper.id,
         version_number=last_number + 1,
-        schema_json=paper_schema.model_dump_json(),
+        schema_json=(schema or documents.stub_schema(title)).model_dump_json(),
         change_summary=summary[:255],
+        doc_kind=doc_kind,
     )
+    if data is not None:
+        version.file_name = documents.write_file(version.id, doc_kind, data)
     db.add(version)
     db.flush()
     paper.current_version_id = version.id
     paper.updated_at = datetime.now(timezone.utc)
-    conv.title = paper_schema.metadata.title[:255]
-    return paper, version.version_number
+    conv.title = title[:255]
+    return paper, version
 
 
-def _describe(paper_schema: PaperSchema) -> str:
-    return f"{paper_schema.total_question_count()} questions, {paper_schema.metadata.total_marks:g} marks"
+def _post(db: Session, conv_id: str, text: str, meta: dict) -> None:
+    db.add(Message(conversation_id=conv_id, role="assistant", content=text, metadata_json=json.dumps(meta)))
 
 
-def _start_paper_job(kind: str, conv: Conversation, user: User, instruction: str, history: List[dict],
-                     sources: List[SourceDoc], source_file: Optional[str], current: Optional[PaperSchema]):
-    """Run generate/import/edit in the background; the result is posted into the chat as a message."""
+def _describe(schema: PaperSchema) -> str:
+    return f"{schema.total_question_count()} questions, {schema.metadata.total_marks:g} marks"
+
+
+def _start_turn(conv: Conversation, user: User):
+    """Run one assistant turn in the background. The reply (and any new version) is posted into the chat."""
     conv_id = conv.id
 
-    async def work():
-        if kind == "edit" and current is not None:
-            schema, summary = await AIService.edit_paper(current, instruction, sources)
-        elif kind == "import":
-            target = next((s for s in reversed(sources) if s.filename == source_file), sources[-1])
-            schema, summary = await AIService.import_document(target, instruction)
-        else:
+    async def work(job: jobs.Job):
+        db = SessionLocal()
+        try:
+            conv_row = db.get(Conversation, conv_id)
+            history = [{"role": m.role, "content": m.content} for m in conv_row.messages]
+            sources = _sources(conv_id, db)
+            version = _current_version(conv_id, db)
+            doc_kind, doc_text = documents.doc_context(version)
+        finally:
+            db.close()
+
+        turn = await AIService.chat_turn(history, doc_kind, doc_text, sources)
+        job.stage = {"edit_document": "edit", "edit_paperly": "edit"}.get(turn.action, turn.action)
+
+        # Do the work (AI calls happen outside any DB session).
+        new = None  # (summary, schema, kind, data, title, changes)
+        if turn.action == "edit_document" and version is not None and doc_kind in ("docx", "pdf"):
+            if not turn.operations:
+                turn.action = "reply"
+            else:
+                original = documents.read_file(version)
+                apply = doc_edit.apply_docx_ops if doc_kind == "docx" else doc_edit.apply_pdf_ops
+                try:
+                    outcome = apply(original, turn.operations)
+                except doc_edit.DocEditError as e:
+                    raise AIServiceError(str(e))
+                changes = [{"before": c.before[:600], "after": c.after[:600]} for c in outcome.changes]
+                schema_title = PaperSchema.model_validate_json(version.schema_json).metadata.title
+                new = (turn.reply, None, doc_kind, outcome.data, schema_title, changes)
+        elif turn.action == "edit_paperly" and doc_kind == "paperly":
+            current = PaperSchema.model_validate_json(version.schema_json)
+            schema, summary = await AIService.edit_paper(current, turn.instruction or history[-1]["content"], sources)
+            new = (summary, schema, "paperly", None, None, [])
+        elif turn.action == "generate":
             requirements = "\n".join(f"{h['role']}: {h['content']}" for h in history[-30:])
-            if instruction:
-                requirements += f"\n\nFinal instruction: {instruction}"
+            if turn.instruction:
+                requirements += f"\n\nFinal instruction: {turn.instruction}"
             schema = await AIService.generate_paper(requirements=requirements, sources=sources)
-            summary = "Generated from your requirements"
+            new = ("Generated from your requirements", schema, "paperly", None, None, [])
+        elif turn.action == "convert":
+            target = None
+            if doc_kind in ("docx", "pdf") and not turn.source_file:
+                data = documents.read_file(version)
+                raw = Path(settings.UPLOAD_DIR) / f"convert-{version.id}{documents.EXTENSIONS[doc_kind]}"
+                raw.write_bytes(data)
+                text = "\n".join(b.text for b in (doc_edit.docx_blocks(data) if doc_kind == "docx" else []))
+                target = SourceDoc(filename=f"document{documents.EXTENSIONS[doc_kind]}", mime_type=documents.MIME[doc_kind],
+                                   text=f"<untrusted_source_material>\n{text}\n</untrusted_source_material>",
+                                   raw_path=str(raw) if doc_kind == "pdf" else None)
+            elif sources:
+                target = next((s for s in reversed(sources) if s.filename == turn.source_file), sources[-1])
+            if target is None:
+                turn.action = "reply"
+            else:
+                schema, summary = await AIService.import_document(target, turn.instruction)
+                new = (summary, schema, "paperly", None, None, [])
+        elif turn.action != "reply":
+            turn.action = "reply"  # nothing to act on
 
         db = SessionLocal()
         try:
             conv_row = db.get(Conversation, conv_id)
-            if conv_row is None:  # deleted while working
-                return {"paper_id": None}
-            paper, version_number = _save_version(conv_row, schema, summary, db)
-            if kind == "edit":
-                action, text = "paper_updated", f"Done: {summary} (version {version_number})"
-            elif kind == "import":
-                action, text = "paper_ready", f"{summary}\n\n'{schema.metadata.title}' is ready: {_describe(schema)}. Open it, or tell me what to change next."
+            if conv_row is None:  # chat deleted meanwhile
+                return {"reply": turn.reply}
+            result = {"reply": turn.reply, "action": turn.action}
+            if new is None:
+                _post(db, conv_id, turn.reply, {"action": "reply"})
             else:
-                action, text = "paper_ready", (
-                    f"Your paper '{schema.metadata.title}' is ready: {_describe(schema)}. "
-                    "Open it to review, ask me for changes, or export it as PDF/DOCX."
+                summary, schema, kind, data, title, changes = new
+                paper, v = _save_version(conv_row, db, summary, schema=schema, doc_kind=kind, data=data, title=title)
+                updated = turn.action in ("edit_document", "edit_paperly")
+                text = turn.reply if turn.action == "edit_document" else (
+                    f"{turn.reply}\n\n{summary}" if updated else
+                    f"{turn.reply}\n\n'{schema.metadata.title}' is ready: {_describe(schema)}."
                 )
-            db.add(Message(
-                conversation_id=conv_id,
-                role="assistant",
-                content=text,
-                metadata_json=json.dumps({"action": action, "paper_id": paper.id, "version": version_number}),
-            ))
+                _post(db, conv_id, text, {
+                    "action": "paper_updated" if updated else "paper_ready",
+                    "paper_id": paper.id, "version": v.version_number, "changes": changes,
+                })
+                result.update(paper_id=paper.id, version=v.version_number)
             conv_row.updated_at = datetime.now(timezone.utc)
             db.commit()
-            return {"paper_id": paper.id, "version": version_number, "summary": summary}
+            return result
         finally:
             db.close()
 
@@ -172,17 +229,12 @@ def _start_paper_job(kind: str, conv: Conversation, user: User, instruction: str
         try:
             if db.get(Conversation, conv_id) is None:
                 return
-            db.add(Message(
-                conversation_id=conv_id,
-                role="assistant",
-                content=f"I couldn't finish that. {message} Send your message again to retry.",
-                metadata_json=json.dumps({"action": "error"}),
-            ))
+            _post(db, conv_id, f"I couldn't do that. {message}", {"action": "error"})
             db.commit()
         finally:
             db.close()
 
-    return jobs.start_job(kind, user.id, work, on_error, conversation_id=conv_id)
+    return jobs.start_job("chat", user.id, work, on_error, conversation_id=conv_id)
 
 
 @router.get("", response_model=List[ConversationSummary])
@@ -217,11 +269,8 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Start a new paper creation conversation thread."""
-    conv = Conversation(
-        user_id=current_user.id,
-        title=(conv_in.title or "New Assessment")[:255]
-    )
+    """Start a new chat."""
+    conv = Conversation(user_id=current_user.id, title=(conv_in.title or "New Assessment")[:255])
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -234,7 +283,7 @@ def get_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Retrieve full conversation details including messages and generated paper."""
+    """Retrieve full conversation details including messages and the chat's document."""
     conv = _get_user_conversation(id, current_user, db)
     paper = _latest_paper(conv.id, db)
     job = jobs.running_job_for_conversation(conv.id)
@@ -256,10 +305,15 @@ def delete_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a conversation along with its messages, uploads and papers."""
+    """Delete a conversation along with its messages, uploads and documents."""
     conv = _get_user_conversation(id, current_user, db)
     for f in conv.uploaded_files:
         _raw_path(f.id, f.filename).unlink(missing_ok=True)
+    for paper in conv.papers:
+        for v in paper.versions:
+            path = documents.file_path(v)
+            if path:
+                path.unlink(missing_ok=True)
     db.delete(conv)
     db.commit()
 
@@ -272,42 +326,23 @@ async def post_message(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Post a teacher message. Paperly replies directly (clarifying question / chat), or starts a background job
-    that generates, imports or edits the paper: then the reply's metadata has action "working", the job kind
-    and a job_id to poll at GET /api/v1/jobs/{job_id}. The finished job posts its own message into the chat.
+    Send a message. The assistant answers in the background: the response is the saved teacher message with
+    metadata {"action": "working", "job_id"}; poll GET /api/v1/jobs/{job_id} (its "stage" says what's happening),
+    then reload the conversation to get the reply (and any new document version).
     """
     conv = _get_user_conversation(id, current_user, db)
     if jobs.running_job_for_conversation(conv.id):
-        raise HTTPException(status_code=409, detail="I'm still working on your last request. Please wait a moment.")
+        raise HTTPException(status_code=409, detail="I'm still working on your last message. Please wait a moment.")
 
-    history = [{"role": m.role, "content": m.content} for m in conv.messages]
-    history.append({"role": "user", "content": msg_in.content})
-    sources = _sources(conv.id, db)
-    current = _current_schema(conv.id, db)
-
-    try:
-        decision = await AIService.decide(history, current, sources)
-    except AIServiceError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
-
-    reply = decision.response_message
-    metadata = {"action": decision.action, "orchestrator_meta": decision.model_dump()}
-    if decision.action in ("generate", "import", "edit"):
-        job = _start_paper_job(decision.action, conv, current_user, decision.instruction or msg_in.content,
-                               history, sources, decision.source_file, current)
-        metadata.update(action="working", kind=decision.action, job_id=job.id)
-        if JOB_MESSAGES[decision.action]:
-            reply = f"{reply}\n\n{JOB_MESSAGES[decision.action]}"
-
-    db.add(Message(conversation_id=conv.id, role="user", content=msg_in.content))
-    assistant_msg = Message(
-        conversation_id=conv.id, role="assistant", content=reply, metadata_json=json.dumps(metadata)
-    )
-    db.add(assistant_msg)
+    user_msg = Message(conversation_id=conv.id, role="user", content=msg_in.content)
+    db.add(user_msg)
     conv.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(assistant_msg)
-    return assistant_msg
+    job = _start_turn(conv, current_user)
+    user_msg.metadata_json = json.dumps({"action": "working", "kind": "chat", "job_id": job.id})
+    db.commit()
+    db.refresh(user_msg)
+    return user_msg
 
 
 @router.post("/{id}/upload", response_model=FileUploadResponse)
@@ -317,7 +352,10 @@ async def upload_source_material(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload a paper to edit, or notes/syllabus to build from: PDF, DOCX, TXT, MD, CSV or a photo."""
+    """
+    Upload a file. Word (.docx) and PDF files become the chat's document (edited in place, formatting kept);
+    photos, TXT/MD/CSV are reference material (e.g. notes to build a paper from, or a photo to rebuild).
+    """
     conv = _get_user_conversation(id, current_user, db)
 
     max_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
@@ -330,56 +368,53 @@ async def upload_source_material(
     filename = (file.filename or "uploaded_file")[:200]
     mime_type = file.content_type or "application/octet-stream"
     suffix = Path(filename).suffix.lower()
-    is_raw = suffix in RAW_TYPES or mime_type.startswith("image/")
+    is_image = mime_type.startswith("image/") or suffix in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif")
+    doc_kind = "docx" if suffix == ".docx" else ("pdf" if suffix == ".pdf" or mime_type == "application/pdf" else None)
 
     try:
         extracted_safe_text, char_count = DocumentExtractionService.extract_text_from_bytes(
-            filename=filename,
-            content=content,
-            mime_type=mime_type
+            filename=filename, content=content, mime_type=mime_type
         )
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
     except Exception:
-        raise HTTPException(status_code=422, detail="Could not read this file. Try a PDF, DOCX, TXT or a photo.")
-    if char_count == 0 and not (is_raw and settings.ai_enabled):
-        raise HTTPException(status_code=422, detail="No readable text found in this file.")
+        raise HTTPException(status_code=422, detail="Could not read this file. Try a PDF, Word file or a photo.")
 
     file_id = str(uuid.uuid4())
-    if is_raw:
+    if is_image:
+        if not settings.ai_enabled:
+            raise HTTPException(status_code=422, detail="Reading photos needs the Gemini key on the server.")
         if not suffix:
             filename += ".jpg"
         _raw_path(file_id, filename).write_bytes(content)
+    elif char_count == 0 and doc_kind != "pdf":
+        raise HTTPException(status_code=422, detail="No readable text found in this file.")
 
-    uploaded = UploadedFile(
-        id=file_id,
-        conversation_id=conv.id,
-        filename=filename,
-        mime_type=mime_type,
-        extracted_text=extracted_safe_text,
-        file_size=len(content)
-    )
-    db.add(uploaded)
-    has_paper = _latest_paper(conv.id, db) is not None
-    db.add(Message(
-        conversation_id=conv.id,
-        role="assistant",
-        content=(
-            f"Got '{filename}'. What should I do with it? For example: "
-            + ('"replace my paper with this one", "add its questions to my paper"'
-               if has_paper else
-               '"change the last question to …", "make it two columns", or "create a new paper from these notes"')
-            + "."
-        ),
-        metadata_json=json.dumps({"action": "file_received", "filename": filename}),
+    db.add(UploadedFile(
+        id=file_id, conversation_id=conv.id, filename=filename, mime_type=mime_type,
+        extracted_text=extracted_safe_text, file_size=len(content),
     ))
+
+    if doc_kind == "pdf" and not doc_edit.pdf_supported():
+        doc_kind = None  # server can't edit PDFs in place; keep it as reference material
+
+    if doc_kind:
+        title = documents.title_from_filename(filename)
+        paper, version = _save_version(conv, db, f"Uploaded {filename}", doc_kind=doc_kind, data=content, title=title)
+        pages = doc_edit.pdf_page_count(content) if doc_kind == "pdf" else None
+        _post(db, conv.id,
+              f"Opened '{filename}'" + (f" ({pages} page{'s' if pages != 1 else ''})" if pages else "") +
+              ". I'll edit this exact document and keep its formatting. Ask me anything about it, or tell me "
+              "what to change.",
+              {"action": "paper_ready", "paper_id": paper.id, "version": version.version_number})
+    else:
+        _post(db, conv.id,
+              f"Got '{filename}'. " + (
+                  "It's a photo, so I can't edit it in place, but I can rebuild it as an editable paper (the look "
+                  "will change), or use it as reference. What would you like?" if is_image else
+                  "I'll use it as reference material. What would you like me to do with it?"),
+              {"action": "file_received", "filename": filename})
     conv.updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(uploaded)
 
-    return FileUploadResponse(
-        file_id=uploaded.id,
-        filename=uploaded.filename,
-        extracted_characters=char_count,
-        status="ready"
-    )
+    return FileUploadResponse(file_id=file_id, filename=filename, extracted_characters=char_count, status="ready")

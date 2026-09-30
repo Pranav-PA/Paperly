@@ -37,6 +37,9 @@ class PaperVersion(Base):
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     schema_json: Mapped[str] = mapped_column(Text, nullable=False)  # Serialized PaperSchema
     change_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # "paperly" = built from schema_json; "docx"/"pdf" = the teacher's own file, edited in place (file_name in DOCS_DIR).
+    doc_kind: Mapped[str] = mapped_column(String(20), default="paperly", nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
